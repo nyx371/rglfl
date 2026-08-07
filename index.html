@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#101418">
+<title>GRIDFORGE</title>
+<link rel="stylesheet" href="style.css?v=20260807210151">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="topbar">
+  <button id="version-badge" class="chip"></button>
+  <div id="rp-chip" class="chip"><span class="chip-icon" data-icon="flask"></span><span id="rp-count">0</span></div>
+  <div id="inv-strip"></div>
+</div>
+
+<div id="version-popover" class="hidden"></div>
+
+<div id="bottombar">
+  <button class="tab" data-panel="build"><span class="tab-icon" data-icon="hammer"></span><span>Build</span></button>
+  <button class="tab" data-panel="tech"><span class="tab-icon" data-icon="processor"></span><span>Tech</span></button>
+  <button class="tab" data-panel="perks"><span class="tab-icon" data-icon="upgrade"></span><span>Perks</span></button>
+  <button class="tab" data-panel="inv"><span class="tab-icon" data-icon="crate"></span><span>Storage</span></button>
+</div>
+
+<div id="sheet" class="hidden">
+  <div id="sheet-head"><span id="sheet-title"></span><button id="sheet-close">&times;</button></div>
+  <div id="sheet-body"></div>
+</div>
+
+<div id="placebar" class="hidden">
+  <span id="placebar-label"></span>
+  <button id="placebar-cancel">Cancel</button>
+</div>
+
+<div id="modal-wrap" class="hidden">
+  <div id="modal"></div>
+</div>
+
+<div id="toasts"></div>
+
+<script src="js/icons.js?v=20260807210151"></script>
+<script src="js/data.js?v=20260807210151"></script>
+<script src="js/game.js?v=20260807210151"></script>
+</body>
+</html>
