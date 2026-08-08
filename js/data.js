@@ -1,7 +1,7 @@
 // GRIDFORGE static data: version, items, recipes, buildings, techs, perks.
 
-const VERSION = "0.4";
-const VERSION_SNIPPET = "Build menu, deep zoom, offline finder, subtle auras";
+const VERSION = "0.5";
+const VERSION_SNIPPET = "Radial build menu and percentage resource allocation";
 
 const ITEMS = {
   ironOre:     { name: "Iron Ore",     icon: "ore",     color: "#7fb3f0" },

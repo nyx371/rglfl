@@ -62,6 +62,7 @@ function freshState() {
     tileDelta: {},      // "x,y" -> {mined} or {coreDmg, broken}
     coresBroken: 0,
     reserve: {},        // itemId -> amount machines must leave untouched
+    alloc: {},          // itemId -> { recipeId|__stock : weight }
     ui: { invCollapsed: false },
     cam: { x: -0.5, y: 1, zoom: 0.8 },
     seenIntro: false,
@@ -264,9 +265,88 @@ function payCost(cost) {
 
 // Machines respect per-item reserves; player actions (building, techs) don't.
 function reserveOf(id) { return state.reserve[id] || 0; }
-function machineCanAfford(cost) {
-  for (const k in cost) if (invGet(k) - reserveOf(k) < cost[k]) return false;
+
+/* ---- allocation: split each item's throughput between competing uses ----
+
+   Instead of belts and splitters, every item has a share table: each recipe
+   that consumes it gets a slice of production, and a "Stockpile" slice keeps
+   items out of machines entirely. As items are produced they are credited to
+   each consumer in proportion to its share; a machine may only start a craft
+   if that recipe holds enough credit for the ingredients. The Stockpile share
+   is credited to nobody, so those items simply accumulate for you to spend on
+   buildings by hand.                                                        */
+
+const STOCK = "__stock";
+let credits = {}; // itemId -> { recipeId: credit } (runtime only)
+
+function consumersOf(itemId) {
+  return Object.keys(RECIPES).filter(rid => {
+    const r = RECIPES[rid];
+    if (!r.in[itemId]) return false;
+    return !r.needsTech || techLvl(r.needsTech);
+  });
+}
+
+function allocWeight(item, key) {
+  const a = state.alloc[item];
+  if (a && a[key] != null) return a[key];
+  return key === STOCK ? 0 : 1; // default: machines take everything, split evenly
+}
+
+function setAllocWeight(item, key, w) {
+  if (!state.alloc[item]) state.alloc[item] = {};
+  state.alloc[item][key] = Math.max(0, Math.min(10, w));
+}
+
+function allocShares(item) {
+  const keys = consumersOf(item).concat([STOCK]);
+  const ws = {};
+  let total = 0;
+  for (const k of keys) { ws[k] = allocWeight(item, k); total += ws[k]; }
+  const share = {};
+  for (const k of keys) share[k] = total > 0 ? ws[k] / total : (k === STOCK ? 1 : 0);
+  return { keys, ws, total, share };
+}
+
+function creditOf(item, key) {
+  return (credits[item] && credits[item][key]) || 0;
+}
+
+// Every inflow of an item (mined, crafted, refunded) is split into credits.
+function produceItem(id, n) {
+  invAdd(id, n);
+  const { keys, share } = allocShares(id);
+  if (!credits[id]) credits[id] = {};
+  // Cap banked credit so an idle consumer can't drain a fresh stockpile at once.
+  const cap = Math.max(100, invGet(id));
+  for (const k of keys) {
+    if (k === STOCK) continue;
+    credits[id][k] = Math.min(cap, creditOf(id, k) + n * share[k]);
+  }
+}
+
+function seedCredits() {
+  credits = {};
+  for (const id in state.inv) {
+    const { keys, share } = allocShares(id);
+    credits[id] = {};
+    for (const k of keys) if (k !== STOCK) credits[id][k] = invGet(id) * share[k];
+  }
+}
+
+function machineCanAfford(cost, recipeId) {
+  for (const k in cost) {
+    if (invGet(k) - reserveOf(k) < cost[k]) return false;
+    if (creditOf(k, recipeId) < cost[k]) return false;
+  }
   return true;
+}
+
+function payMachineCost(cost, recipeId) {
+  for (const k in cost) {
+    state.inv[k] -= cost[k];
+    credits[k][recipeId] -= cost[k];
+  }
 }
 
 /* ---- per-second rate tracking (display only, not saved) ---- */
@@ -338,7 +418,7 @@ function tickDrill(b, dt) {
         yield_ *= 1 + luck; // expected value for big batches
       }
     }
-    invAdd(t.res, yield_);
+    produceItem(t.res, yield_);
     const key = b.x + "," + b.y;
     const d = state.tileDelta[key] || (state.tileDelta[key] = {});
     d.mined = (d.mined || 0) + cycles;
@@ -354,8 +434,8 @@ function tickMachine(b, dt) {
   let budget = dt * machineSpeed(b.type);
   for (let guard = 0; guard < 200; guard++) {
     if (!b.crafting) {
-      if (!machineCanAfford(r.in)) return;
-      payCost(r.in);
+      if (!machineCanAfford(r.in, b.recipe)) return;
+      payMachineCost(r.in, b.recipe);
       b.crafting = true;
       b.job = b.recipe;
       b.progress = 0;
@@ -364,7 +444,7 @@ function tickMachine(b, dt) {
     const need = jr.time - b.progress;
     if (budget < need) { b.progress += budget; return; }
     budget -= need;
-    for (const k in jr.out) invAdd(k, jr.out[k]);
+    for (const k in jr.out) produceItem(k, jr.out[k]);
     if (jr.rp) {
       state.rp += jr.rp;
       addFloater(b.x + 0.5, b.y, "+" + jr.rp + " RP", "#8ab4f0");
@@ -406,7 +486,7 @@ function tickHold(dt) {
     if (hold.kind === "res") {
       if (t.left <= 0) { stopHold(); return; }
       const y = manualMult();
-      invAdd(t.res, y);
+      produceItem(t.res, y);
       mineTileUnit(hold.x, hold.y);
       addFloater(hold.x + 0.5, hold.y + 0.2, "+" + fmt(y), ITEMS[t.res].color);
       if (navigator.vibrate) navigator.vibrate(5);
@@ -460,7 +540,7 @@ function applyPerk(id) {
   const p = PERKS.find(q => q.id === id);
   if (id === "hoard") {
     const amt = Math.round(100 * Math.pow(1.6, state.coresBroken));
-    for (const r of ["ironOre", "copperOre", "coal", "stone", "crystal"]) invAdd(r, amt);
+    for (const r of ["ironOre", "copperOre", "coal", "stone", "crystal"]) produceItem(r, amt);
     toast(`Hoarder's Cache: +${fmt(amt)} of every raw resource`);
   } else {
     toast("Perk gained: " + p.name);
@@ -482,6 +562,8 @@ function resize() {
   canvas.height = Math.round(H * DPR);
 }
 window.addEventListener("resize", resize);
+// iOS Safari resizes the visual viewport when its toolbar slides in/out
+if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
 
 function tilePx() { return TILE * state.cam.zoom; }
 function worldToScreen(wx, wy) {
@@ -832,12 +914,65 @@ function setMode(name, building) {
   }
 }
 
+/* ---- radial tile menu: icon-only build ring around the tapped tile ---- */
+
+function closeRadial() {
+  el("radial").classList.add("hidden");
+  el("radial").innerHTML = "";
+  if (currentSheet !== "building") selTile = null;
+}
+
+function openRadial(tx, ty, sx, sy) {
+  const opts = optionsForTile(tx, ty).filter(id => !BUILDINGS[id].hidden);
+  if (!opts.length) return;
+  selTile = { x: tx, y: ty };
+
+  const wrap = el("radial");
+  wrap.innerHTML = "";
+  wrap.classList.remove("hidden");
+
+  const R = 74;
+  const cx = Math.min(W - R - 34, Math.max(R + 34, sx));
+  const cy = Math.min(H - R - 90, Math.max(R + 60, sy));
+
+  // center chip: what this tile is
+  const t = tileAt(tx, ty);
+  const chip = document.createElement("div");
+  chip.className = "rad-center";
+  chip.style.left = cx + "px";
+  chip.style.top = cy + "px";
+  chip.innerHTML = t && t.res
+    ? svgIcon(ITEMS[t.res].icon, ITEMS[t.res].color) + fmt(t.left)
+    : `<span style="color:var(--dim)">empty</span>`;
+  wrap.appendChild(chip);
+
+  // ring of building icons, starting at the top
+  const step = (Math.PI * 2) / opts.length;
+  const start = -Math.PI / 2 - (opts.length > 1 ? step / 2 : 0);
+  opts.forEach((id, i) => {
+    const a = start + step * i;
+    const blocker = placeBlocker(id, tx, ty);
+    const btn = document.createElement("button");
+    btn.className = "rad-btn " + (blocker ? "no" : "ok");
+    btn.style.left = (cx + Math.cos(a) * R) + "px";
+    btn.style.top = (cy + Math.sin(a) * R) + "px";
+    btn.innerHTML = svgIcon(BUILDINGS[id].icon, blocker ? "#8a99a8" : "#f2c67f");
+    btn.addEventListener("click", ev => {
+      ev.stopPropagation();
+      if (blocker) { toast(BUILDINGS[id].name + ": " + blocker); return; }
+      tryPlace(id, tx, ty);
+      closeRadial();
+    });
+    wrap.appendChild(btn);
+  });
+}
+
 function demolish(tx, ty) {
   const key = tx + "," + ty;
   const b = state.buildings[key];
   if (!b || b.type === "base") return;
   const cost = BUILDINGS[b.type].cost;
-  for (const k in cost) invAdd(k, Math.floor(cost[k] / 2));
+  for (const k in cost) produceItem(k, Math.floor(cost[k] / 2));
   delete state.buildings[key];
   rebuildCoverage();
   toast(BUILDINGS[b.type].name + " demolished (50% refund)");
@@ -861,6 +996,7 @@ canvas.addEventListener("pointerdown", e => {
     pinchStart = { d: Math.hypot(a.x - b.x, a.y - b.y), zoom: state.cam.zoom };
   } else if (pointers.size === 1) {
     suppressTap = false;
+    closeRadial(); // a new touch on the map always dismisses the ring first
     const [wx, wy] = screenToWorld(e.clientX, e.clientY);
     const tx = Math.floor(wx), ty = Math.floor(wy);
     clearTimeout(holdTimer);
@@ -908,14 +1044,15 @@ function pointerEnd(e) {
   const dur = performance.now() - p.t;
   if (!p.moved && dur < 350 && !suppressTap && e.type === "pointerup") {
     const [wx, wy] = screenToWorld(e.clientX, e.clientY);
-    handleTap(Math.floor(wx), Math.floor(wy));
+    handleTap(Math.floor(wx), Math.floor(wy), e.clientX, e.clientY);
   }
   e.preventDefault();
 }
 canvas.addEventListener("pointerup", pointerEnd);
 canvas.addEventListener("pointercancel", pointerEnd);
 
-function handleTap(tx, ty) {
+function handleTap(tx, ty, sx, sy) {
+  closeRadial();
   const b = state.buildings[tx + "," + ty];
   if (mode.name === "place") {
     if (b) { openBuildingSheet(tx, ty); return; }
@@ -928,7 +1065,8 @@ function handleTap(tx, ty) {
     toast(`Core deposit — press & hold to crack it (${fmt(t.hp - t.dmg)} HP)`);
     return;
   }
-  openSheet("tile", { x: tx, y: ty });
+  closeSheet();
+  openRadial(tx, ty, sx, sy);
 }
 
 // Belt & suspenders against browser gestures the CSS can't fully stop.
@@ -1014,7 +1152,8 @@ let sheetContext = null; // for building sheet: {x, y}
 function openSheet(name, ctx2) {
   currentSheet = name;
   sheetContext = ctx2 || null;
-  selTile = (name === "tile" || name === "building") ? { x: ctx2.x, y: ctx2.y } : null;
+  if (name !== "alloc") closeRadial();
+  selTile = name === "building" ? { x: ctx2.x, y: ctx2.y } : null;
   el("sheet").classList.remove("hidden");
   document.querySelectorAll("#bottombar .tab").forEach(b =>
     b.classList.toggle("active", b.dataset.panel === name));
@@ -1066,44 +1205,53 @@ function renderSheet() {
         closeSheet();
       }));
 
-  } else if (currentSheet === "tile") {
-    const { x, y } = sheetContext;
-    const t = tileAt(x, y);
-    title.textContent = t && t.res
-      ? (t.left > 0 ? ITEMS[t.res].name + " deposit" : "Exhausted ground")
-      : "Open ground";
-    const covered = inCoverage(x, y);
-    let h = "";
-    if (t && t.res && t.left > 0) {
-      h += `<div class="card">
-        <span class="card-icon">${svgIcon(ITEMS[t.res].icon, ITEMS[t.res].color)}</span>
-        <span class="card-main"><div class="card-title">${fmt(t.left)} left</div>
-        <div class="card-sub">Press &amp; hold the tile to mine by hand${covered ? "" : " — it's outside the transfer grid, so drills won't run here yet"}</div></span>
-      </div>`;
+  } else if (currentSheet === "alloc") {
+    const item = sheetContext.item;
+    title.textContent = ITEMS[item].name + " split";
+    el("sheet-actions").innerHTML = `<button class="icon-btn" data-back="1">${svgIcon("crate", "#8a99a8")}</button>`;
+    el("sheet-actions").querySelector("[data-back]")
+      .addEventListener("click", () => openSheet("inv"));
+    const { keys, ws, total, share } = allocShares(item);
+    const colorFor = k => k === STOCK ? "#f2a33c"
+      : (RECIPES[k].rp ? "#8ab4f0" : ITEMS[Object.keys(RECIPES[k].out)[0]].color);
+
+    let bar = `<div class="alloc-bar">`;
+    for (const k of keys) {
+      if (share[k] <= 0) continue;
+      bar += `<span style="width:${(share[k] * 100).toFixed(1)}%;background:${colorFor(k)}"></span>`;
     }
-    if (!covered) {
-      h += `<div class="card"><span class="card-icon">${svgIcon("relay", "#e06060")}</span>
-        <span class="card-main"><div class="card-title">Outside the transfer grid</div>
-        <div class="card-sub">Buildings only work inside a relay aura connected to your base. Chain Relays out here to extend the grid.</div></span></div>`;
-    }
-    for (const id of optionsForTile(x, y)) {
-      const spec = BUILDINGS[id];
-      if (spec.hidden) continue;
-      const blocker = placeBlocker(id, x, y);
-      const count = Object.values(state.buildings).filter(q => q.type === id).length;
-      h += `<div class="card ${blocker ? "locked" : ""}">
-        <span class="card-icon">${svgIcon(spec.icon, "#dfe8f2")}</span>
-        <span class="card-main">
-          <div class="card-title">${spec.name}${count ? ` <span class="lvl">x${count}</span>` : ""}</div>
-          <div class="card-sub">${spec.desc}<br>${costHtml(spec.cost)}${blocker ? `<br><span style="color:var(--bad)">${blocker}</span>` : ""}</div>
+    bar += `</div>`;
+
+    let h = bar + `<div class="slim">${svgIcon("info", "#8a99a8")}<span>Production is dealt out in these proportions. <b>Stockpile</b> is held back from machines so you can spend it on buildings.</span></div>`;
+
+    for (const k of keys) {
+      const isStock = k === STOCK;
+      const icon = isStock ? svgIcon("crate", "#f2a33c")
+        : svgIcon(RECIPES[k].rp ? "flask" : ITEMS[Object.keys(RECIPES[k].out)[0]].icon, colorFor(k));
+      const name = isStock ? "Stockpile" : RECIPES[k].name;
+      const sub = isStock ? "Kept for building by hand"
+        : `${RECIPES[k].in[item]} ${ITEMS[item].name} per craft`;
+      h += `<div class="alloc-row">
+        <span class="alloc-swatch" style="background:${share[k] > 0 ? colorFor(k) : "#39424d"}"></span>
+        <span class="alloc-icon">${icon}</span>
+        <span class="alloc-name">${name}<small>${sub}</small></span>
+        <span class="alloc-step">
+          <button data-w="${k}" data-d="-1" ${ws[k] <= 0 ? "disabled" : ""}>&minus;</button>
+          <span class="alloc-pct">${total > 0 ? (share[k] * 100).toFixed(0) + "%" : "—"}</span>
+          <button data-w="${k}" data-d="1" ${ws[k] >= 10 ? "disabled" : ""}>+</button>
         </span>
-        <button class="btn" data-place="${id}" ${blocker ? "disabled" : ""}>Build</button>
       </div>`;
     }
-    body.innerHTML = h || `<div class="card"><span class="card-main"><div class="card-sub">Nothing to do here.</div></span></div>`;
-    body.querySelectorAll("[data-place]").forEach(btn =>
+    if (total === 0) {
+      h += `<div class="slim">${svgIcon("lock", "#f2a33c")}<span>Everything is stockpiled — no machine may consume ${ITEMS[item].name}.</span></div>`;
+    }
+    body.innerHTML = h;
+    body.querySelectorAll("[data-w]").forEach(btn =>
       btn.addEventListener("click", () => {
-        if (tryPlace(btn.dataset.place, x, y)) closeSheet();
+        const k = btn.dataset.w;
+        setAllocWeight(item, k, allocWeight(item, k) + Number(btn.dataset.d));
+        saveGame();
+        renderSheet();
       }));
 
   } else if (currentSheet === "menu") {
@@ -1186,17 +1334,24 @@ function renderSheet() {
     title.textContent = "Resources";
     const rows = INV_ORDER.filter(id => invGet(id) >= 1 || reserveOf(id) > 0);
     body.innerHTML = rows.length
-      ? rows.map(id => `<div class="card">
+      ? rows.map(id => {
+          const cons = consumersOf(id);
+          const sh = cons.length ? allocShares(id) : null;
+          const split = sh && sh.total > 0
+            ? cons.map(k => `${(sh.share[k] * 100).toFixed(0)}% ${RECIPES[k].name}`).join(" · ") +
+              (sh.share[STOCK] > 0 ? ` · ${(sh.share[STOCK] * 100).toFixed(0)}% stockpiled` : "")
+            : (cons.length ? "All stockpiled" : "");
+          return `<div class="card">
           <span class="card-icon">${svgIcon(ITEMS[id].icon, ITEMS[id].color)}</span>
           <span class="card-main">
             <div class="card-title">${ITEMS[id].name} ${rateHtml(id)}</div>
-            <div class="card-sub">${reserveOf(id)
-              ? `Reserved: ${fmt(reserveOf(id))} — machines won't touch this stash`
-              : "Tap the lock to reserve a stash machines can't consume"}</div>
+            <div class="card-sub">${split || (reserveOf(id) ? `Reserved ${fmt(reserveOf(id))}` : "Not used by any recipe yet")}</div>
           </span>
           <span class="card-title" style="margin-right:6px">${fmt(invGet(id))}</span>
+          ${cons.length ? `<button class="btn ghost lock-btn" data-split="${id}">${svgIcon("expand", "#f2a33c")}</button>` : ""}
           <button class="btn ghost lock-btn" data-lock="${id}">${svgIcon("lock", reserveOf(id) ? "#f2a33c" : "#8a99a8")}<span>${reserveOf(id) ? fmt(reserveOf(id)) : "Off"}</span></button>
-        </div>`).join("")
+        </div>`;
+        }).join("")
       : `<div class="card"><span class="card-main"><div class="card-sub">Nothing yet — press &amp; hold a resource tile to mine it by hand.</div></span></div>`;
     body.querySelectorAll("[data-lock]").forEach(btn =>
       btn.addEventListener("click", () => {
@@ -1206,6 +1361,8 @@ function renderSheet() {
         saveGame();
         renderSheet();
       }));
+    body.querySelectorAll("[data-split]").forEach(btn =>
+      btn.addEventListener("click", () => openSheet("alloc", { item: btn.dataset.split })));
 
   } else if (currentSheet === "building") {
     const b = state.buildings[sheetContext.x + "," + sheetContext.y];
@@ -1297,7 +1454,7 @@ function frame(t) {
   if (uiTimer > 0.25) { uiTimer = 0; updateTopbar(); }
   sheetTimer += dt;
   // live-refresh open sheets that show counts, rates or affordability
-  if (sheetTimer > 1 && (currentSheet === "tile" || currentSheet === "build" || currentSheet === "tech" || currentSheet === "inv")) {
+  if (sheetTimer > 1 && (currentSheet === "build" || currentSheet === "tech" || currentSheet === "inv")) {
     sheetTimer = 0;
     if (!el("sheet-body").querySelector(":active")) renderSheet();
   }
@@ -1313,6 +1470,7 @@ function boot() {
     state.buildings["0,0"] = { type: "base", x: 0, y: 0, recipe: null, job: null, progress: 0, crafting: false };
   }
   rebuildCoverage();
+  seedCredits();
   resize();
   initChrome();
   updateTopbar();

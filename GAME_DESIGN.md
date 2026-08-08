@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 0.4** — see [Version history](#version-history).
+**Current version: 0.5** — see [Version history](#version-history).
 
 ---
 
@@ -60,13 +60,16 @@ perk choice ← crack core deposit ← expand outward ← research tech
   large progress ring extends well past the thumb, and a callout bubble above
   the finger shows the mined item, amount left, and swing progress (0.2 —
   sized so your own thumb never hides the feedback).
-- **Build (0.3, expanded 0.4):** two equivalent flows. *Tap-on-grid:* tap any
-  terrain tile for a contextual sheet offering only the buildings that make
-  sense there (ore tile → Drill or Relay; open ground → the rest), with
-  blocking reasons spelled out. *Build menu:* pick a building from the Build
-  tab, then tap tiles to place it repeatedly — ideal for chaining relays —
-  until you hit Done. Demolish lives in the building sheet's header and
-  refunds 50%.
+- **Build (0.3, expanded 0.4, radial in 0.5):** two complementary flows.
+  *Tap-on-grid:* tapping a terrain tile pops a small **radial menu** of
+  icon-only buttons around that tile — just the buildings valid there (ore
+  tile → Drill or Relay; open ground → the rest), with a center chip naming
+  the tile's contents. Unaffordable or out-of-range options are dimmed and
+  explain themselves via toast when tapped. The backdrop is pass-through, so
+  panning still works with the ring open. *Build menu:* the Build tab carries
+  the full descriptions and costs; picking one enters repeat-placement mode
+  (tap tiles until Done) — ideal for chaining relays. Demolish lives in the
+  building sheet's header and refunds 50%.
 - **Navigation (0.4):** the dedicated minimap is gone — instead the camera
   zooms out far enough (to 0.12x) that the world *becomes* the minimap, with
   a low-detail render mode (flat color fields, no icons) keeping it fast.
@@ -110,6 +113,41 @@ in Storage: off/100/1k/10k/100k). Machines never consume an item below its
 reserve, so you can stockpile e.g. gears for building labs while assemblers
 keep running on the surplus. Player actions (placing buildings, buying techs)
 ignore reserves — the stash is yours, it's only protected from automation.
+
+### Allocation — the belt-free splitter (0.5)
+
+**The problem.** With one shared pool and no belts, a single hungry consumer
+eats an intermediate as fast as it is made. Iron plates vanish into gears the
+instant they are smelted, so you can never bank plates for circuits or for
+building. Factorio solves this with belts and splitters; that is far too
+fiddly for a thumb.
+
+**The solution: percentage shares per item.** Every item has a share table
+listing each recipe that consumes it, plus a **Stockpile** entry. Production is
+dealt out into those proportions:
+
+- As an item is produced, each consumer is *credited* its share of the amount.
+- A machine may only begin a craft if that recipe holds enough credit for the
+  ingredients; starting one spends the credit.
+- The Stockpile share is credited to nobody, so that fraction of production
+  simply accumulates for you to spend on buildings by hand.
+
+Set "50% Gear / 50% Stockpile" on iron plate and exactly half of every plate
+smelted stays untouchable by assemblers. Set "70% Circuit / 30% Gear" and the
+two lines split throughput in that ratio no matter which machine asks first.
+
+**Why this shape.** It is one concept (a pie of percentages per item) instead
+of a spatial routing puzzle; it reads at a glance as a stacked bar; it is
+edited with ±  steppers rather than drag targets, so it works one-handed; and
+it scales — a hundred assemblers behave like one line with one share.
+
+Defaults are backwards compatible: every consuming recipe starts at weight 1
+and Stockpile at 0, i.e. machines take everything and competing recipes split
+evenly. Credits are capped per consumer (`max(100, stock)`) so an idle line
+cannot bank forever and then drain a fresh stockpile in one burst.
+
+Reserves and allocation compose: a reserve is a hard floor on the *stock*,
+allocation is a proportional split of the *flow*.
 
 **Rates (0.2):** the Storage sheet shows a smoothed net items/second next to
 each item, so production vs. consumption balance is visible at a glance.
@@ -156,7 +194,10 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
   item/tile colors are pushed far apart (blue iron, orange copper, near-black
   coal, tan stone, cyan crystal) so fields read distinctly at any zoom.
 - **Bottom bar:** Build / Tech / Perks / Inventory sheet toggles.
-- **Sheets** slide up from the bottom; the map stays live behind them.
+- **Sheets** slide up from the bottom and rest directly on the tab bar (which
+  paints above them), so there is never a dead band of padding underneath.
+  Heights use `dvh` so iOS Safari's collapsing toolbar can't strand the
+  content. The map stays live behind them.
 - All symbols are SVG path icons from [game-icons.net](https://game-icons.net)
   (CC BY 3.0 — authors: lorc, delapouite, faithtoken). No emojis, ever.
 
@@ -173,7 +214,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 ## Roadmap
 
-- **0.2** — belts/logistics tier, storage caps, offline progress.
+- **0.6** — storage caps, offline progress, allocation presets.
 - **0.3** — power system, steel/advanced material tier, drill-vs-core mining.
 - **0.4** — prestige loop ("re-seed the planet"), perk rarity tiers, biomes.
 - **0.5** — sound, haptics, achievements, cloud save export.
@@ -182,6 +223,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 0.5 | Radial build menu and percentage resource allocation |
 | 0.4 | Build menu, deep zoom, offline finder, subtle auras |
 | 0.3 | Relay transfer grid, minimap, tap-to-build, menu tab |
 | 0.2 | Mining callout, resource reserves, rates, structure badges |
