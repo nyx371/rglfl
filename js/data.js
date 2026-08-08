@@ -1,7 +1,7 @@
 // GRIDFORGE static data: version, items, recipes, buildings, techs, perks.
 
-const VERSION = "1.0";
-const VERSION_SNIPPET = "Two-finger paint building, starvation hints, gross rates";
+const VERSION = "1.1";
+const VERSION_SNIPPET = "Fixes stock that machines could never consume";
 
 // Research points get their own mark, distinct from the flask item.
 const RP_ICON = "research";

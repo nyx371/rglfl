@@ -266,11 +266,14 @@ function rebuildAttention() {
   for (const key in state.buildings) {
     const b = state.buildings[key];
     b._dry = false;
+    b._stuck = false;
     if (b.type === "drill") {
       const t = tileAt(b.x, b.y);
       b._dry = !t || !t.res || t.left <= 0;
+    } else if (b.type !== "relay" && b.type !== "base") {
+      b._stuck = (b.idle || 0) > 20; // starved long enough to be worth a look
     }
-    if (b._off || b._dry) offlineList.push(b);
+    if (b._off || b._dry || b._stuck) offlineList.push(b);
   }
 }
 
@@ -293,8 +296,28 @@ function canAfford(cost) {
   for (const k in cost) if (invGet(k) < cost[k]) return false;
   return true;
 }
+// Player spending (buildings, techs, upgrades) comes out of the Stockpile
+// bucket first — that is exactly what the stockpile share is set aside for —
+// and only dips into consumer credit once the stockpile is dry.
 function payCost(cost) {
-  for (const k in cost) state.inv[k] -= cost[k];
+  for (const k in cost) {
+    state.inv[k] -= cost[k];
+    debitLedger(k, cost[k]);
+  }
+}
+
+function debitLedger(id, amt) {
+  const led = credits[id];
+  if (!led) return;
+  const fromStock = Math.min(led[STOCK] || 0, amt);
+  if (fromStock > 0) led[STOCK] -= fromStock;
+  let rest = amt - fromStock;
+  if (rest <= 1e-9) return;
+  const cons = Object.keys(led).filter(k => k !== STOCK);
+  let sum = 0;
+  for (const k of cons) sum += led[k];
+  if (sum <= 0) return;
+  for (const k of cons) led[k] = Math.max(0, led[k] - rest * (led[k] / sum));
 }
 
 // Machines respect per-item reserves; player actions (building, techs) don't.
@@ -346,18 +369,15 @@ function creditOf(item, key) {
   return (credits[item] && credits[item][key]) || 0;
 }
 
-// Every inflow of an item (mined, crafted, refunded) is split into credits.
+// Every inflow of an item (mined, crafted, refunded) is split into the ledger.
+// Stockpile holds a real bucket like any consumer, so the ledger accounts for
+// every unit in stock — see reconcileCredits for why that matters.
 function produceItem(id, n) {
   invAdd(id, n);
   if (n > 0) { state.seen[id] = 1; noteProduced(id, n); }
   const { keys, share } = allocShares(id);
   if (!credits[id]) credits[id] = {};
-  // Cap banked credit so an idle consumer can't drain a fresh stockpile at once.
-  const cap = Math.max(100, invGet(id));
-  for (const k of keys) {
-    if (k === STOCK) continue;
-    credits[id][k] = Math.min(cap, creditOf(id, k) + n * share[k]);
-  }
+  for (const k of keys) credits[id][k] = creditOf(id, k) + n * share[k];
 }
 
 function seedCredits() {
@@ -365,7 +385,52 @@ function seedCredits() {
   for (const id in state.inv) {
     const { keys, share } = allocShares(id);
     credits[id] = {};
-    for (const k of keys) if (k !== STOCK) credits[id][k] = invGet(id) * share[k];
+    for (const k of keys) credits[id][k] = invGet(id) * share[k];
+  }
+}
+
+// The ledger must always add up to what's actually on the shelf. Stock can
+// otherwise fall outside it — items banked before a recipe was unlocked, a
+// share table that gained or lost a consumer, a save from an older build —
+// and because machines gate on credit, un-ledgered stock would sit unusable
+// forever. Runs once a second and is self-correcting in both directions.
+function reconcileCredits(id) {
+  const { keys, share } = allocShares(id);
+  const avail = Math.max(0, invGet(id) - reserveOf(id));
+  const led = credits[id] || (credits[id] = {});
+
+  let sum = 0;
+  for (const k in led) {
+    if (keys.indexOf(k) < 0) { delete led[k]; continue; } // consumer went away
+    sum += led[k];
+  }
+
+  const diff = avail - sum;
+  if (Math.abs(diff) > 1e-6) {
+    if (diff > 0) {
+      // un-ledgered stock: hand it out along the current split
+      for (const k of keys) led[k] = (led[k] || 0) + diff * share[k];
+    } else if (sum > 0) {
+      // stock spent behind the ledger's back: shrink every bucket in proportion
+      const f = avail / sum;
+      for (const k of keys) led[k] = (led[k] || 0) * f;
+    }
+  }
+
+  // Stock banked while an item had no consumer lands in Stockpile because
+  // there was nowhere else to put it — not because the player asked for it.
+  // When the split sets Stockpile to zero, release it. Above zero the bucket
+  // stays sticky, or a standing stockpile would bleed away a slice at a time.
+  if (share[STOCK] === 0 && (led[STOCK] || 0) > 1e-6) {
+    const held = led[STOCK];
+    led[STOCK] = 0;
+    for (const k of keys) if (k !== STOCK) led[k] = (led[k] || 0) + held * share[k];
+  }
+}
+
+function reconcileAll() {
+  for (const id in ITEMS) {
+    if (state.seen[id] || invGet(id) > 0 || credits[id]) reconcileCredits(id);
   }
 }
 
@@ -407,6 +472,7 @@ function updateRates(dt) {
   }
   prodAccum = {};
   rateClock = 0;
+  reconcileAll();
   censusStarvation();
 }
 
@@ -555,7 +621,8 @@ function tickMachine(b, dt) {
   let budget = dt * machineSpeed(b);
   for (let guard = 0; guard < 200; guard++) {
     if (!b.crafting) {
-      if (!machineCanAfford(r.in, b.recipe)) return;
+      if (!machineCanAfford(r.in, b.recipe)) { b.idle = (b.idle || 0) + dt; return; }
+      b.idle = 0;
       payMachineCost(r.in, b.recipe);
       b.crafting = true;
       b.job = b.recipe;
@@ -918,8 +985,9 @@ function render() {
       ctx.fillText("Mk" + bLevel(b), sx + s * 0.12, sy + s * 0.74);
     }
 
-    // an exhausted drill is flagged everywhere on screen, not just near center
-    if (b._dry && s >= 14) {
+    // a dead tile or a long-starved machine is flagged everywhere on screen,
+    // not just near center like the item badges
+    if ((b._dry || b._stuck) && s >= 14) {
       badges.push({
         x: sx + s * 0.92, y: sy + s * 0.08,
         icon: "warn", color: "#f2a33c",
@@ -930,7 +998,7 @@ function render() {
 
     // item-type badge for buildings near the center of the screen; scales
     // with zoom and disappears once tiles get small
-    if (!b._dry && s >= 16) {
+    if (!b._dry && !b._stuck && s >= 16) {
       const dc = Math.hypot(sx + s / 2 - W / 2, sy + s / 2 - H / 2);
       const R0 = Math.min(W, H) * 0.38;
       if (dc < R0 * 1.25) {
@@ -1070,7 +1138,14 @@ function optionsForTile(tx, ty) {
 // down a row of assemblers doesn't mean re-picking the recipe each time.
 function defaultRecipeFor(type) {
   const last = state.lastRecipe[type];
-  if (last && RECIPES[last] && (!RECIPES[last].needsTech || techLvl(RECIPES[last].needsTech))) return last;
+  const r = last && RECIPES[last];
+  if (r && (!r.needsTech || techLvl(r.needsTech))) {
+    // ...but never hand a new machine a recipe whose inputs you've never held;
+    // it would sit idle looking broken.
+    let known = true;
+    for (const k in r.in) if (!state.seen[k]) known = false;
+    if (known) return last;
+  }
   return BUILDINGS[type].defaultRecipe || null;
 }
 
@@ -1409,7 +1484,8 @@ function initChrome() {
     offlineIdx = offlineIdx % offlineList.length;
     const b = offlineList[offlineIdx++];
     flyTo(b.x + 0.5, b.y + 0.5, Math.max(0.5, state.cam.zoom));
-    toast(BUILDINGS[b.type].name + (b._dry ? " · exhausted" : " · offline"));
+    toast(BUILDINGS[b.type].name +
+      (b._dry ? " · exhausted" : b._stuck ? " · starved" : " · offline"));
   });
   // tabs
   document.querySelectorAll("#bottombar .tab").forEach(btn => {

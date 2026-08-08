@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 1.0** — see [Version history](#version-history).
+**Current version: 1.1** — see [Version history](#version-history).
 
 ---
 
@@ -65,17 +65,20 @@ wrong.
    washing every tile. (0.8 tinted each legal tile and outlined the region;
    correct information, far too much ink. Reach for the mark already on
    screen before adding a new one.)
-9. **State the machine can't fix, the map must show.** A drill on a dead tile
-   carries a pulsing warning badge visible anywhere on screen — not only near
-   the centre like the item badges — and joins the top-bar attention chip that
-   cycles the camera through everything needing a look.
+9. **State the machine can't fix, the map must show.** A drill on a dead tile,
+   or any machine starved for more than 20 seconds, carries a pulsing warning
+   badge visible anywhere on screen — not only near the centre like the item
+   badges — and joins the top-bar attention chip that cycles the camera
+   through everything needing a look. A factory that has quietly stopped
+   should announce itself, not wait to be audited.
 10. **Feedback must survive repetition.** An effect that fires once is a
     flourish; the same effect across two hundred machines is a strobe. Machine
     output is a faint inner warmth and a 3% scale pop — never an outline flash.
-11. **Remember the last choice.** Placing a machine reuses the recipe you last
-    set on that machine type, falling back to the default only when the
-    remembered one is tech-locked. Laying down a row of assemblers is one
-    decision, not one per building.
+11. **Remember the last choice, but never hand over a broken one.** Placing a
+    machine reuses the recipe you last set on that machine type — unless it is
+    tech-locked, or needs an input you have never held, in which case it falls
+    back to the building default. Inheriting a recipe you cannot feed produces
+    a row of machines that look built and do nothing.
 12. **Bulk work deserves a bulk gesture.** A second finger changes the verb:
     with a build or demolish armed, a two-finger drag paints along its path
     instead of panning or zooming, so laying a relay chain or clearing a dead
@@ -217,8 +220,33 @@ it scales — a hundred assemblers behave like one line with one share.
 
 Defaults are backwards compatible: every consuming recipe starts at weight 1
 and Stockpile at 0, i.e. machines take everything and competing recipes split
-evenly. Credits are capped per consumer (`max(100, stock)`) so an idle line
-cannot bank forever and then drain a fresh stockpile in one burst.
+evenly.
+
+**The ledger must be complete (1.1).** Stockpile holds a real bucket like any
+consumer, and the invariant is that every bucket for an item sums to the stock
+actually on the shelf. This is not bookkeeping neatness — machines gate on
+credit, so any stock sitting *outside* the ledger is dead forever. That was a
+real bug: 300 crystal flasks banked before Advanced Flasks was researched, with
+a correctly configured lab and full coverage, produced nothing at all, because
+credits were only ever issued at production time and the consumer did not exist
+yet. A reconciliation pass runs once a second and is self-correcting in both
+directions — un-ledgered stock is handed out along the current split, and stock
+spent behind the ledger's back shrinks every bucket proportionally.
+
+Two rules keep that pass honest:
+
+- **Stockpile is sticky above zero.** Reconciliation must never re-derive the
+  stockpile bucket from current stock, or a standing 50% stockpile would bleed
+  away a slice every second (50 of 100, then 25 of 50, …) and never hold.
+- **Stockpile at exactly zero releases.** Stock banked while an item had no
+  consumer lands in Stockpile because there was nowhere else to put it, not
+  because the player asked for it. A zero share means "set nothing aside", so
+  the bucket drains to consumers — which is also what lowering the share to
+  zero should visibly do.
+
+Player spending (buildings, techs, upgrades) debits Stockpile first, which is
+exactly what that share is set aside for, and only dips into consumer credit
+once the stockpile is dry.
 
 Reserves and allocation compose: a reserve is a hard floor on the *stock*,
 allocation is a proportional split of the *flow*.
@@ -330,6 +358,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 1.1 | Fixes stock that machines could never consume |
 | 1.0 | Two-finger paint building, starvation hints, gross rates |
 | 0.9 | RP in top bar, sticky recipes, exhausted drill warnings |
 | 0.8 | Placement area preview, full-row taps, calmer machine flash |
