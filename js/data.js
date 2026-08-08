@@ -1,7 +1,7 @@
 // GRIDFORGE static data: version, items, recipes, buildings, techs, perks.
 
-const VERSION = "1.2";
-const VERSION_SNIPPET = "Hold-to-draw, leaner ore, momentum pan, pinch anchoring";
+const VERSION = "1.3";
+const VERSION_SNIPPET = "Mining streaks, icon recipes, drills cost iron plates";
 
 // Research points get their own mark, distinct from the flask item.
 const RP_ICON = "research";
@@ -58,7 +58,9 @@ const BUILDINGS = {
   drill: {
     name: "Drill", icon: "drill",
     desc: "Place on a resource tile. Mines it automatically.",
-    cost: { ironOre: 15, stone: 5 },
+    // Smelted plates, not raw ore: you must stand up a smelter before you can
+    // automate mining, so the opening teaches the chain in order.
+    cost: { ironPlate: 4, stone: 5 },
     placeOn: "resource",
     baseRate: 0.3, // items per second at 1x
   },

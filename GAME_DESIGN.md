@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 1.2** — see [Version history](#version-history).
+**Current version: 1.3** — see [Version history](#version-history).
 
 ---
 
@@ -91,6 +91,11 @@ wrong.
 14. **Repeats collapse, they don't stack.** Identical messages become
     "Not enough resources ×5" on one line with its timer restarted, rather
     than a column of the same sentence.
+15. **Quantities are icons and numbers, never sentences.** Every cost and
+    recipe renders as icon + count — `[ore]2 [coal]1 → [plate]1 · 2.0s` — with
+    shortfalls in red. The icon already carries the name, tabular figures keep
+    columns aligned, and a recipe becomes scannable at a glance in any
+    language.
 13. **One meaning, one mark.** Research points own the idea icon; the flask
     stays the craftable item. Reusing a symbol for two things makes a lab's
     overlay ambiguous with its own ingredient.
@@ -164,8 +169,28 @@ the one-tap "Clear" button exist to make that churn cheap to service.
   character.
 - **Manual mine:** press-and-hold any resource tile; the tile highlights, a
   large progress ring extends well past the thumb, and a callout bubble above
-  the finger shows the mined item, amount left, and swing progress (0.2 —
-  sized so your own thumb never hides the feedback).
+  the finger shows the mined item and the amount left (0.2 — sized so your own
+  thumb never hides the feedback).
+
+### Mining streaks (1.3)
+
+Hold without letting go and mining **revs up**. Each landed swing adds to a
+streak that peaks after nine:
+
+| | Cold | Peak |
+|---|---|---|
+| Swing interval | 1.10s | 0.42s |
+| Yield per swing | ×1 | ×3 |
+
+Releasing resets it to zero, so the expressive choice is *commitment*: stay on
+one tile and ride the streak, or hop around and stay cold. Everything escalates
+with it — the ring runs from ember orange to white-hot and thickens, spokes
+around its rim count the streak so it is legible at a glance, particle count
+and screen shake scale up, haptics get heavier, and the callout shows the live
+multiplier. It gives the one verb you always have a skill curve, and it pays
+back the slower base rate (1.2) for anyone willing to commit to a patch.
+
+Core deposits use the same ramp, so cracking one rewards a sustained hold too.
 - **Build (0.3, expanded 0.4, radial in 0.5):** two complementary flows.
   *Tap-on-grid:* tapping a terrain tile pops a small **radial menu** of
   icon-only buttons around that tile — just the buildings valid there (ore
@@ -189,6 +214,12 @@ the one-tap "Clear" button exist to make that churn cheap to service.
   suppressed — long-press is a *game verb* here.
 
 ### Production chain
+**Bootstrap order (1.3).** Drills cost **smelted iron plates**, not raw ore, so
+the opening has to be walked in order: hand-mine stone → build a smelter →
+hand-mine ore and coal → smelt plates → build your first drill. Automation is
+something you *earn* with the chain rather than the first thing you buy, and
+the player meets smelting before they meet mass production.
+
 | Building | Placed on | Does |
 |---|---|---|
 | Drill | ore/coal/stone tile | mines the tile into global storage |
@@ -387,6 +418,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 1.3 | Mining streaks, icon recipes, drills cost iron plates |
 | 1.2 | Hold-to-draw, leaner ore, momentum pan, pinch anchoring |
 | 1.1 | Fixes stock that machines could never consume |
 | 1.0 | Two-finger paint building, starvation hints, gross rates |

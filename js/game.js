@@ -666,7 +666,20 @@ function tickMachine(b, dt) {
 
 /* ============================== manual mining ============================== */
 
-const hold = { active: false, x: 0, y: 0, t: 0, kind: null };
+/* Manual mining revs up. Hold without letting go and the swings come faster
+   and hit harder — a streak that peaks after ~9 swings and resets the moment
+   you release. It gives the one verb you always have a skill curve, and pays
+   back the slower base rate for anyone willing to commit to a tile. */
+
+const hold = { active: false, x: 0, y: 0, t: 0, kind: null, streak: 0 };
+const STREAK_PEAK = 9;
+
+function holdRamp() { return Math.min(1, hold.streak / STREAK_PEAK); }
+function holdInterval() {
+  const base = hold.kind === "core" ? 0.5 : 1.1;
+  return base * (1 - 0.62 * holdRamp());
+}
+function holdPower() { return 1 + 2 * holdRamp(); }
 
 function startHold(tx, ty) {
   const t = tileAt(tx, ty);
@@ -679,37 +692,44 @@ function startHold(tx, ty) {
   } else if (t.core) {
     hold.kind = "core";
   } else return false;
-  hold.active = true; hold.x = tx; hold.y = ty; hold.t = 0;
+  hold.active = true; hold.x = tx; hold.y = ty; hold.t = 0; hold.streak = 0;
   if (navigator.vibrate) navigator.vibrate(8);
   return true;
 }
 
-function stopHold() { hold.active = false; }
+function stopHold() { hold.active = false; hold.streak = 0; }
 
 function tickHold(dt) {
-  const interval = hold.kind === "core" ? 0.5 : 1.1;
   hold.t += dt;
+  let interval = holdInterval();
   while (hold.t >= interval) {
     hold.t -= interval;
+    // this swing is paid at the streak it was earned at; the increment counts
+    // toward the next one
+    const ramp = holdRamp();
+    const pow = holdPower();
+    hold.streak++;
+    interval = holdInterval();
     const t = tileAt(hold.x, hold.y);
     if (!t) { stopHold(); return; }
     if (hold.kind === "res") {
       if (t.left <= 0) { stopHold(); return; }
-      const y = manualMult() * resYieldMult(t.res);
+      const y = manualMult() * resYieldMult(t.res) * pow;
       produceItem(t.res, y);
       mineTileUnit(hold.x, hold.y);
       addFloater(hold.x + 0.5, hold.y + 0.2, "+" + fmt(y), ITEMS[t.res].color);
-      burst(hold.x + 0.5, hold.y + 0.5, ITEMS[t.res].color, 7, 1.5);
-      addShake(2.5);
-      if (navigator.vibrate) navigator.vibrate(5);
+      burst(hold.x + 0.5, hold.y + 0.5, ITEMS[t.res].color, 6 + Math.round(14 * ramp), 1.5 + 1.6 * ramp);
+      addShake(2 + 5 * ramp);
+      if (navigator.vibrate) navigator.vibrate(4 + Math.round(8 * ramp));
     } else {
       const key = hold.x + "," + hold.y;
       const d = state.tileDelta[key] || (state.tileDelta[key] = {});
-      d.coreDmg = (d.coreDmg || 0) + manualMult() * coreDamageMult();
-      addFloater(hold.x + 0.5, hold.y + 0.2, "-" + fmt(manualMult() * coreDamageMult()), "#c48be0");
-      burst(hold.x + 0.5, hold.y + 0.5, "#c48be0", 6, 1.7);
-      addShake(4);
-      if (navigator.vibrate) navigator.vibrate(10);
+      const dmg = manualMult() * coreDamageMult() * pow;
+      d.coreDmg = (d.coreDmg || 0) + dmg;
+      addFloater(hold.x + 0.5, hold.y + 0.2, "-" + fmt(dmg), "#c48be0");
+      burst(hold.x + 0.5, hold.y + 0.5, "#c48be0", 6 + Math.round(14 * ramp), 1.7 + 1.6 * ramp);
+      addShake(3 + 6 * ramp);
+      if (navigator.vibrate) navigator.vibrate(8 + Math.round(10 * ramp));
       if (d.coreDmg >= t.hp) {
         d.broken = true;
         stopHold();
@@ -1046,38 +1066,59 @@ function render() {
   // hold-mining feedback: highlighted tile, big ring past the thumb, callout bubble
   if (hold.active) {
     const [sx, sy] = worldToScreen(hold.x + 0.5, hold.y + 0.5);
-    const interval = hold.kind === "core" ? 0.5 : 1.1;
+    const interval = holdInterval();
+    const ramp = holdRamp();
     const t = tileAt(hold.x, hold.y);
-    const pulse = 0.75 + 0.25 * Math.sin(lastT / 110);
+    const pulse = 0.75 + 0.25 * Math.sin(lastT / (110 - 60 * ramp));
+    // the ring runs from ember orange to white-hot as the streak builds
+    const hot = [
+      Math.round(242 + 13 * ramp),
+      Math.round(163 + 82 * ramp),
+      Math.round(60 + 140 * ramp),
+    ].join(",");
 
     // tile highlight
-    ctx.strokeStyle = `rgba(242,163,60,${0.9 * pulse})`;
-    ctx.lineWidth = Math.max(2, s * 0.05);
+    ctx.strokeStyle = `rgba(${hot},${0.9 * pulse})`;
+    ctx.lineWidth = Math.max(2, s * 0.05) * (1 + 0.6 * ramp);
     ctx.strokeRect(sx - s / 2, sy - s / 2, s, s);
 
     // big progress ring, radius well beyond a thumb
-    const R = Math.max(s * 0.95, 46);
-    ctx.strokeStyle = "rgba(242,163,60,.25)";
-    ctx.lineWidth = Math.max(5, s * 0.11);
+    const R = Math.max(s * 0.95, 46) * (1 + 0.1 * ramp);
+    ctx.strokeStyle = `rgba(${hot},.25)`;
+    ctx.lineWidth = Math.max(5, s * 0.11) * (1 + 0.5 * ramp);
     ctx.beginPath();
     ctx.arc(sx, sy, R, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.strokeStyle = "rgba(242,163,60,.95)";
+    ctx.strokeStyle = `rgba(${hot},.95)`;
     ctx.beginPath();
     ctx.arc(sx, sy, R, -Math.PI / 2, -Math.PI / 2 + (hold.t / interval) * Math.PI * 2);
     ctx.stroke();
+    // spokes mark each landed swing, so the streak is countable
+    if (hold.streak > 0) {
+      const spokes = Math.min(hold.streak, STREAK_PEAK);
+      ctx.lineWidth = Math.max(2, s * 0.04);
+      for (let i = 0; i < spokes; i++) {
+        const a = -Math.PI / 2 + (i / STREAK_PEAK) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(sx + Math.cos(a) * (R + 5), sy + Math.sin(a) * (R + 5));
+        ctx.lineTo(sx + Math.cos(a) * (R + 12), sy + Math.sin(a) * (R + 12));
+        ctx.stroke();
+      }
+    }
 
     // callout above the finger so the thumb never hides it. The ring already
     // shows swing progress, so this only carries what the ring can't.
     if (t) {
-      const bw = 134, bh = 38;
+      const mult = holdPower();
+      const showMult = mult > 1.05;
+      const bw = showMult ? 176 : 134, bh = 38;
       const bx = Math.min(W - bw - 8, Math.max(8, sx - bw / 2));
       const by = Math.max(8, sy - R - bh - 16);
       ctx.fillStyle = "rgba(26,33,41,.96)";
       roundRect(bx, by, bw, bh, 11);
       ctx.fill();
-      ctx.strokeStyle = "#f2a33c";
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = `rgb(${hot})`;
+      ctx.lineWidth = 1.5 + ramp;
       roundRect(bx, by, bw, bh, 11);
       ctx.stroke();
       const icon = t.res ? ITEMS[t.res].icon : "core";
@@ -1087,6 +1128,12 @@ function render() {
       ctx.fillStyle = "#d8e2ec";
       ctx.font = "700 15px -apple-system, sans-serif";
       ctx.fillText(t.res ? fmt(t.left) : fmt(t.hp - t.dmg), bx + 44, by + bh / 2 + 5);
+      if (showMult) {
+        ctx.textAlign = "right";
+        ctx.fillStyle = `rgb(${hot})`;
+        ctx.font = `800 ${15 + Math.round(4 * ramp)}px -apple-system, sans-serif`;
+        ctx.fillText("×" + mult.toFixed(1), bx + bw - 12, by + bh / 2 + 5);
+      }
     }
   }
 
@@ -1611,13 +1658,22 @@ function closeSheet() {
   document.querySelectorAll("#bottombar .tab").forEach(b => b.classList.remove("active"));
 }
 
-function costHtml(cost, rp) {
+// Costs and recipes read as icon + number: quantities are what you scan for,
+// and the names are already carried by the icons.
+function iconCost(map, check) {
   let h = "";
-  if (rp) h += `<span class="cost ${state.rp >= rp ? "" : "short"}">${svgIcon(RP_ICON, "currentColor")} ${fmt(rp)} RP</span>`;
-  for (const k in cost) {
-    h += `<span class="cost ${invGet(k) >= cost[k] ? "" : "short"}">${svgIcon(ITEMS[k].icon, ITEMS[k].color)} ${cost[k]} ${ITEMS[k].name}</span>`;
+  for (const k in map) {
+    const short = check && invGet(k) < map[k];
+    h += `<span class="cost${short ? " short" : ""}">${
+      svgIcon(ITEMS[k].icon, short ? "#e06060" : ITEMS[k].color)}${fmt(map[k])}</span>`;
   }
   return h;
+}
+
+function costHtml(cost, rp) {
+  let h = "";
+  if (rp) h += `<span class="cost ${state.rp >= rp ? "" : "short"}">${svgIcon(RP_ICON, RP_COLOR)}${fmt(rp)}</span>`;
+  return h + iconCost(cost, true);
 }
 
 // A row with exactly one action is tappable end to end — the button stays as
@@ -1668,8 +1724,7 @@ function renderSheet() {
         <span class="card-icon">${svgIcon("warn", "#f2a33c")}</span>
         <span class="card-main">
           <div class="card-title">${dry.length} exhausted drill${dry.length > 1 ? "s" : ""}</div>
-          <div class="card-sub">${Object.keys(refund).map(k =>
-            `<span class="cost">${svgIcon(ITEMS[k].icon, ITEMS[k].color)}${refund[k]}</span>`).join("")}</div>
+          <div class="card-sub">${iconCost(refund)}</div>
         </span>
         <button class="btn danger" data-clear="1">Clear</button>
       </div>` + h;
@@ -1721,7 +1776,7 @@ function renderSheet() {
       const icon = isStock ? svgIcon("crate", "#f2a33c")
         : svgIcon(RECIPES[k].rp ? RP_ICON : ITEMS[Object.keys(RECIPES[k].out)[0]].icon, colorFor(k));
       const name = isStock ? "Stockpile" : RECIPES[k].name;
-      const sub = isStock ? "" : `${RECIPES[k].in[item]} per craft`;
+      const sub = isStock ? "" : iconCost({ [item]: RECIPES[k].in[item] });
       h += `<div class="alloc-row">
         <span class="alloc-swatch" style="background:${share[k] > 0 ? colorFor(k) : "#39424d"}"></span>
         <span class="alloc-icon">${icon}</span>
@@ -1916,8 +1971,7 @@ function renderSheet() {
       h += `<div class="alloc-row">
         <span class="alloc-icon">${svgIcon("upgrade", ok ? "#f2a33c" : "#8a99a8")}</span>
         <span class="alloc-name">Mk${bLevel(b)} &rarr; Mk${bLevel(b) + 1}
-          <small>${Object.keys(cost).map(k =>
-            `<span style="color:${invGet(k) >= cost[k] ? "var(--dim)" : "var(--bad)"}">${cost[k]} ${ITEMS[k].name}</span>`).join(" &middot; ")}</small></span>
+          <small>${iconCost(cost, true)}</small></span>
         <button class="btn" data-up="1" ${ok ? "" : "disabled"}>x${UPGRADE.speedPerLevel}</button>
       </div>`;
     }
@@ -1962,10 +2016,12 @@ function renderSheet() {
 function recipeDesc(b) {
   const r = RECIPES[b.recipe];
   if (!r) return "";
-  const ins = Object.keys(r.in).map(k => `${r.in[k]} ${ITEMS[k].name}`).join(" + ");
-  const outs = r.rp ? `${r.rp} RP` : Object.keys(r.out).map(k => `${r.out[k]} ${ITEMS[k].name}`).join(" + ");
+  const ins = iconCost(r.in);
+  const outs = r.rp
+    ? `<span class="cost">${svgIcon(RP_ICON, RP_COLOR)}${r.rp}</span>`
+    : iconCost(r.out);
   const t = (r.time / machineSpeed(b)).toFixed(1);
-  return `${ins} &rarr; ${outs} every ${t}s`;
+  return `${ins}<span class="arrow">&rarr;</span>${outs}<span class="per">${t}s</span>`;
 }
 
 function openBuildingSheet(x, y) { openSheet("building", { x, y }); }
