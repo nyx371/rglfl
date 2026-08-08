@@ -64,7 +64,7 @@ function freshState() {
     reserve: {},        // itemId -> amount machines must leave untouched
     alloc: {},          // itemId -> { recipeId|__stock : weight }
     seen: {},           // itemId -> 1 once ever obtained; keeps Resources stable
-    ui: { invCollapsed: false },
+    lastRecipe: {},     // machine type -> last recipe you chose, reused on place
     cam: { x: -0.5, y: 1, zoom: 0.8 },
     seenIntro: false,
   };
@@ -247,7 +247,6 @@ function rebuildCoverage() {
     }
   }
   // cache per-building coverage / offline status
-  offlineList = [];
   for (const key in state.buildings) {
     const b = state.buildings[key];
     b._cov = inCoverage(b.x, b.y);
@@ -257,7 +256,21 @@ function rebuildCoverage() {
     } else {
       b._off = !b._cov;
     }
-    if (b._off) offlineList.push(b);
+  }
+  rebuildAttention();
+}
+
+// Buildings wanting a look: offline, or a drill sitting on a dead tile.
+function rebuildAttention() {
+  offlineList = [];
+  for (const key in state.buildings) {
+    const b = state.buildings[key];
+    b._dry = false;
+    if (b.type === "drill") {
+      const t = tileAt(b.x, b.y);
+      b._dry = !t || !t.res || t.left <= 0;
+    }
+    if (b._off || b._dry) offlineList.push(b);
   }
 }
 
@@ -751,43 +764,6 @@ function render() {
     }
   }
 
-  // placement area: while a build type is armed, wash every tile it can go on
-  // and trace a single outline around the region's boundary.
-  if (mode.name === "place" && !lod) {
-    const type = mode.building;
-    const affordable = canAfford(BUILDINGS[type].cost);
-    const ok = new Set();
-    for (let ty = y0 - 1; ty <= y1; ty++) {
-      for (let tx = x0 - 1; tx <= x1; tx++) {
-        if (optionsForTile(tx, ty).indexOf(type) < 0) continue;
-        const t = tileAt(tx, ty);
-        const gate = t && t.res && RESOURCES[t.res].needsTech;
-        if (gate && !techLvl(gate)) continue;
-        const covered = inCoverage(tx, ty);
-        const [sx, sy] = worldToScreen(tx, ty);
-        if (covered && affordable) {
-          ok.add(tx + "," + ty);
-          ctx.fillStyle = "rgba(111,206,111,.10)";
-        } else {
-          ctx.fillStyle = covered ? "rgba(242,163,60,.05)" : "rgba(224,96,96,.06)";
-        }
-        ctx.fillRect(sx, sy, s + 1, s + 1);
-      }
-    }
-    ctx.strokeStyle = "rgba(126,222,126,.7)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (const key of ok) {
-      const [tx, ty] = key.split(",").map(Number);
-      const [sx, sy] = worldToScreen(tx, ty);
-      if (!ok.has(tx + "," + (ty - 1))) { ctx.moveTo(sx, sy); ctx.lineTo(sx + s, sy); }
-      if (!ok.has(tx + "," + (ty + 1))) { ctx.moveTo(sx, sy + s); ctx.lineTo(sx + s, sy + s); }
-      if (!ok.has((tx - 1) + "," + ty)) { ctx.moveTo(sx, sy); ctx.lineTo(sx, sy + s); }
-      if (!ok.has((tx + 1) + "," + ty)) { ctx.moveTo(sx + s, sy); ctx.lineTo(sx + s, sy + s); }
-    }
-    ctx.stroke();
-  }
-
   // grid (subtle, only when zoomed in)
   if (state.cam.zoom > 0.65) {
     ctx.strokeStyle = "rgba(255,255,255,.035)";
@@ -811,7 +787,8 @@ function render() {
     const sb = state.buildings[sheetContext.x + "," + sheetContext.y];
     if (sb && (sb.type === "relay" || sb.type === "base")) strongRelay = sb;
   }
-  const placingRelay = mode.name === "place" && mode.building === "relay";
+  // Placing anything lights the whole grid: the aura *is* the placement area.
+  const placingRelay = mode.name === "place";
   for (const r of gridRelays) {
     const [cx, cy] = worldToScreen(r.x + 0.5, r.y + 0.5);
     const rp = r.r * s;
@@ -915,9 +892,19 @@ function render() {
       ctx.fillText("Mk" + bLevel(b), sx + s * 0.12, sy + s * 0.74);
     }
 
+    // an exhausted drill is flagged everywhere on screen, not just near center
+    if (b._dry && s >= 14) {
+      badges.push({
+        x: sx + s * 0.92, y: sy + s * 0.08,
+        icon: "warn", color: "#f2a33c",
+        size: Math.min(24, Math.max(14, s * 0.42)),
+        alpha: 0.75 + 0.25 * Math.sin(lastT / 300),
+      });
+    }
+
     // item-type badge for buildings near the center of the screen; scales
     // with zoom and disappears once tiles get small
-    if (s >= 16) {
+    if (!b._dry && s >= 16) {
       const dc = Math.hypot(sx + s / 2 - W / 2, sy + s / 2 - H / 2);
       const R0 = Math.min(W, H) * 0.38;
       if (dc < R0 * 1.25) {
@@ -1053,6 +1040,14 @@ function optionsForTile(tx, ty) {
   return ["smelter", "assembler", "lab", "relay"]; // free or exhausted ground
 }
 
+// New machines inherit whatever you last set on that machine type, so laying
+// down a row of assemblers doesn't mean re-picking the recipe each time.
+function defaultRecipeFor(type) {
+  const last = state.lastRecipe[type];
+  if (last && RECIPES[last] && (!RECIPES[last].needsTech || techLvl(RECIPES[last].needsTech))) return last;
+  return BUILDINGS[type].defaultRecipe || null;
+}
+
 function placeBlocker(type, tx, ty) {
   const t = tileAt(tx, ty);
   if (type === "drill" && t && t.res) {
@@ -1071,7 +1066,7 @@ function tryPlace(type, tx, ty) {
   payCost(BUILDINGS[type].cost);
   state.buildings[tx + "," + ty] = {
     type, x: tx, y: ty,
-    recipe: BUILDINGS[type].defaultRecipe || null,
+    recipe: defaultRecipeFor(type),
     job: null, progress: 0, crafting: false,
   };
   rebuildCoverage();
@@ -1353,7 +1348,7 @@ function initChrome() {
     offlineIdx = offlineIdx % offlineList.length;
     const b = offlineList[offlineIdx++];
     flyTo(b.x + 0.5, b.y + 0.5, Math.max(0.5, state.cam.zoom));
-    toast(BUILDINGS[b.type].name + " · " + b.x + ", " + b.y);
+    toast(BUILDINGS[b.type].name + (b._dry ? " · exhausted" : " · offline"));
   });
   // tabs
   document.querySelectorAll("#bottombar .tab").forEach(btn => {
@@ -1363,17 +1358,6 @@ function initChrome() {
     });
   });
   el("sheet-close").addEventListener("click", closeSheet);
-  // wrap vs collapsed single-row inventory strip
-  const applyInvMode = () => {
-    el("inv-strip").classList.toggle("wrap", !state.ui.invCollapsed);
-    el("inv-toggle").classList.toggle("collapsed", state.ui.invCollapsed);
-  };
-  el("inv-toggle").addEventListener("click", () => {
-    state.ui.invCollapsed = !state.ui.invCollapsed;
-    applyInvMode();
-    saveGame();
-  });
-  applyInvMode();
 }
 
 const INV_ORDER = Object.keys(ITEMS);
@@ -1383,7 +1367,8 @@ function updateTopbar() {
   jump.classList.toggle("hidden", offlineList.length === 0);
   if (offlineList.length) el("offline-count").textContent = offlineList.length;
   const strip = el("inv-strip");
-  let html = "";
+  let html = `<div class="chip rp${state.rp < 1 ? " empty" : ""}"><span class="chip-icon" style="color:#8ab4f0">${
+    svgIcon("flask", "#8ab4f0")}</span>${fmt(state.rp)}</div>`;
   for (const id of INV_ORDER) {
     const n = invGet(id);
     if (!state.seen[id] && n < 1) continue; // fixed order, discovered items stay
@@ -1686,7 +1671,9 @@ function renderSheet() {
     body.querySelectorAll("[data-recipe]").forEach(btn =>
       btn.addEventListener("click", () => {
         b.recipe = btn.dataset.recipe;
+        state.lastRecipe[b.type] = b.recipe;
         b.crafting = false; b.progress = 0;
+        saveGame();
         renderSheet();
       }));
   }
@@ -1726,6 +1713,7 @@ function buyTech(id) {
 let lastT = 0;
 let uiTimer = 0;
 let sheetTimer = 0;
+let attnTimer = 0;
 
 function frame(t) {
   const dt = Math.min(0.25, (t - lastT) / 1000 || 0);
@@ -1735,6 +1723,8 @@ function frame(t) {
   render();
   uiTimer += dt;
   if (uiTimer > 0.25) { uiTimer = 0; updateTopbar(); refreshRadial(); updatePlacebar(); }
+  attnTimer += dt;
+  if (attnTimer > 1.5) { attnTimer = 0; rebuildAttention(); } // tiles run dry over time
   sheetTimer += dt;
   // live-refresh open sheets that show counts, rates or affordability
   if (sheetTimer > 1 && (currentSheet === "build" || currentSheet === "tech" || currentSheet === "inv")) {

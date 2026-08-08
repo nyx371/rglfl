@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 0.8** — see [Version history](#version-history).
+**Current version: 0.9** — see [Version history](#version-history).
 
 ---
 
@@ -59,13 +59,23 @@ wrong.
 7. **The row is the button.** Where a list row has exactly one action, the
    whole row is the tap target; the button remains only as the affordance.
    Thumbs are wide and buttons are small.
-8. **Show the whole answer, not the one tile.** Arming a build washes every
-   legal tile on screen and traces one outline around the region — where the
-   grid reaches, and which ore patches qualify, are then a glance rather than
-   a series of failed taps.
-9. **Feedback must survive repetition.** An effect that fires once is a
-   flourish; the same effect across two hundred machines is a strobe. Machine
-   output is a faint inner warmth and a 3% scale pop — never an outline flash.
+8. **Show the whole answer, with the lightest mark that carries it.** Arming a
+   build must answer "where can this go?" — but the answer is the relay aura,
+   which already exists, so placement mode simply brightens it rather than
+   washing every tile. (0.8 tinted each legal tile and outlined the region;
+   correct information, far too much ink. Reach for the mark already on
+   screen before adding a new one.)
+9. **State the machine can't fix, the map must show.** A drill on a dead tile
+   carries a pulsing warning badge visible anywhere on screen — not only near
+   the centre like the item badges — and joins the top-bar attention chip that
+   cycles the camera through everything needing a look.
+10. **Feedback must survive repetition.** An effect that fires once is a
+    flourish; the same effect across two hundred machines is a strobe. Machine
+    output is a faint inner warmth and a 3% scale pop — never an outline flash.
+11. **Remember the last choice.** Placing a machine reuses the recipe you last
+    set on that machine type, falling back to the default only when the
+    remembered one is tech-locked. Laying down a row of assemblers is one
+    decision, not one per building.
 
 ## Game feel
 
@@ -255,9 +265,10 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 ## UI layout
 
-- **Top bar:** recenter button, inventory strip, collapse toggle, minimap.
-  The strip wraps to multiple rows by default; the toggle collapses it to a
-  single scrollable row (0.2).
+- **Top bar (0.9):** an attention chip (only when something is offline or a
+  drill has run dry) above a single wrapping strip that leads with research
+  points and then every discovered resource in fixed order, dimmed at zero.
+  No collapse control — the strip is stable enough not to need one.
 - **Bottom tabs (0.3):** Tech / Perks / Resources / Menu. Research points and
   their rate live at the top of the Tech sheet. The Menu sheet holds the
   version + what's-new snippet, recenter, reset, and icon attribution — the
@@ -298,6 +309,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 0.9 | RP in top bar, sticky recipes, exhausted drill warnings |
 | 0.8 | Placement area preview, full-row taps, calmer machine flash |
 | 0.7 | Particles, screen shake, eased camera, stable resource list |
 | 0.6 | Steel, titanium, processors and per-machine Mk upgrades |
