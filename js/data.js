@@ -1,7 +1,7 @@
 // GRIDFORGE static data: version, items, recipes, buildings, techs, perks.
 
-const VERSION = "1.4";
-const VERSION_SNIPPET = "Synthesised sound, ambience and upgradeable aura pylons";
+const VERSION = "1.5";
+const VERSION_SNIPPET = "Fixes machines starving beside a full stockpile";
 
 // Research points get their own mark, distinct from the flask item.
 const RP_ICON = "research";

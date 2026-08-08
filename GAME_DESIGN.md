@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 1.4** — see [Version history](#version-history).
+**Current version: 1.5** — see [Version history](#version-history).
 
 ---
 
@@ -318,7 +318,16 @@ yet. A reconciliation pass runs once a second and is self-correcting in both
 directions — un-ledgered stock is handed out along the current split, and stock
 spent behind the ledger's back shrinks every bucket proportionally.
 
-Two rules keep that pass honest:
+**Only live recipes get a share (1.5).** A share must go to a recipe something
+is *actually set to produce*, not merely to one that exists and is unlocked.
+This was a real bug: coal is an input to Iron Plate, Copper Plate and Steel
+Plate, so a player with only iron smelters had coal split evenly with a copper
+line that did not exist — half of it frozen against a recipe with no machine
+behind it. The iron smelters burned their half and then reported starvation
+with a thousand coal in storage. Counting only recipes in use doubled that
+factory's output from the same ore.
+
+Three rules keep the reconciliation pass honest:
 
 - **Stockpile is sticky above zero.** Reconciliation must never re-derive the
   stockpile bucket from current stock, or a standing 50% stockpile would bleed
@@ -328,6 +337,12 @@ Two rules keep that pass honest:
   because the player asked for it. A zero share means "set nothing aside", so
   the bucket drains to consumers — which is also what lowering the share to
   zero should visibly do.
+- **Stockpile sheds its excess when the consumer set changes, and only then.**
+  With a non-zero stockpile share the bucket can still end up holding more than
+  its share, having absorbed everything while there was nobody to hand it to.
+  Rebalancing it *once, on the change* corrects that without touching a settled
+  split — doing the same every tick is precisely the drain the sticky rule
+  exists to prevent.
 
 Player spending (buildings, techs, upgrades) debits Stockpile first, which is
 exactly what that share is set aside for, and only dips into consumer credit
@@ -469,6 +484,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 1.5 | Fixes machines starving beside a full stockpile |
 | 1.4 | Synthesised sound, ambience and upgradeable aura pylons |
 | 1.3 | Mining streaks, icon recipes, drills cost iron plates |
 | 1.2 | Hold-to-draw, leaner ore, momentum pan, pinch anchoring |

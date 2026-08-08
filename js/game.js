@@ -254,6 +254,7 @@ function rebuildCoverage() {
     }
   }
   // cache per-building coverage / offline status
+  refreshRecipesInUse();
   computePylons();
   for (const key in state.buildings) {
     const b = state.buildings[key];
@@ -391,11 +392,26 @@ function reserveOf(id) { return state.reserve[id] || 0; }
 const STOCK = "__stock";
 let credits = {}; // itemId -> { recipeId: credit } (runtime only)
 
+// Only recipes something is actually set to produce. A recipe with no machine
+// behind it must not be dealt a share: it would sit on credit forever while
+// the lines that *are* running starve beside a full stockpile.
+let recipesInUse = new Set();
+
+function refreshRecipesInUse() {
+  const s = new Set();
+  for (const key in state.buildings) {
+    const b = state.buildings[key];
+    if (b.recipe) s.add(b.recipe);
+  }
+  recipesInUse = s;
+}
+
 function consumersOf(itemId) {
   return Object.keys(RECIPES).filter(rid => {
     const r = RECIPES[rid];
     if (!r.in[itemId]) return false;
-    return !r.needsTech || techLvl(r.needsTech);
+    if (r.needsTech && !techLvl(r.needsTech)) return false;
+    return recipesInUse.has(rid);
   });
 }
 
@@ -481,9 +497,31 @@ function reconcileCredits(id) {
     led[STOCK] = 0;
     for (const k of keys) if (k !== STOCK) led[k] = (led[k] || 0) + held * share[k];
   }
+
+  // When the set of live consumers changes, the Stockpile may be holding more
+  // than its share — it absorbed everything back when there was nobody to
+  // hand it to. Shed that excess once, on the change. Doing this every tick
+  // instead would drain a standing stockpile a slice at a time; doing it only
+  // on a change leaves a settled split alone.
+  const sig = keys.join("|");
+  if (lastConsumerSig[id] !== sig) {
+    lastConsumerSig[id] = sig;
+    const target = avail * share[STOCK];
+    const excess = (led[STOCK] || 0) - target;
+    if (excess > 1e-6 && share[STOCK] < 1) {
+      led[STOCK] = target;
+      for (const k of keys) {
+        if (k === STOCK) continue;
+        led[k] = (led[k] || 0) + excess * (share[k] / (1 - share[STOCK]));
+      }
+    }
+  }
 }
 
+let lastConsumerSig = {};
+
 function reconcileAll() {
+  refreshRecipesInUse();
   for (const id in ITEMS) {
     if (state.seen[id] || invGet(id) > 0 || credits[id]) reconcileCredits(id);
   }
@@ -2107,7 +2145,8 @@ function renderSheet() {
       btn.addEventListener("click", () => {
         b.recipe = btn.dataset.recipe;
         state.lastRecipe[b.type] = b.recipe;
-        b.crafting = false; b.progress = 0;
+        b.crafting = false; b.progress = 0; b.idle = 0;
+        reconcileAll(); // the set of live recipes just changed
         saveGame();
         renderSheet();
       }));
@@ -2123,6 +2162,7 @@ function renderSheet() {
       q.crafting = false; q.progress = 0; q.idle = 0;
       n++;
     }
+    reconcileAll();
     toast(n + " set to " + RECIPES[b.recipe].name);
     saveGame();
     renderSheet();
