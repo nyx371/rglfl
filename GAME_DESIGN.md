@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 0.5** — see [Version history](#version-history).
+**Current version: 0.6** — see [Version history](#version-history).
 
 ---
 
@@ -28,9 +28,27 @@ every time.
 2. **Automate or ache.** Manual mining (press-and-hold) works but is slow;
    the game constantly nudges you toward building the machine that does it for you.
 3. **Numbers go vertical.** Multiplicative perk stacking × exponential repeatable
-   techs × distance-scaled ore richness. Every system multiplies the others.
+   techs × per-machine Mk levels × distance-scaled ore richness. Every system
+   multiplies the others.
 4. **Sessions of any size.** 30 seconds of tapping or an hour of factory layout
    both feel productive. State autosaves to localStorage.
+
+## UI principles
+
+These are binding on every screen; when a change violates one, the change is
+wrong.
+
+1. **A refusal must state its price.** Anything you cannot do right now shows
+   exactly what it needs, in place — the radial's blocked options carry a cost
+   pill listing each missing resource in red. Never "Not enough resources".
+2. **Never say a thing twice.** One fact, one place: press-and-hold shows swing
+   progress *only* in the ring, so the callout above the thumb carries just the
+   amount remaining.
+3. **Live, not snapshot.** Anything showing affordability re-evaluates while
+   open — the radial ring lights up mid-mine as ore arrives, with no reopen.
+4. **No instructions in menus.** The interface teaches itself through icons,
+   costs and state. Copy is labels and numbers, never a tutorial. Exactly one
+   first-run toast covers press-and-hold, which no icon can imply.
 
 ## Core loop
 
@@ -152,25 +170,45 @@ allocation is a proportional split of the *flow*.
 **Rates (0.2):** the Storage sheet shows a smoothed net items/second next to
 each item, so production vs. consumption balance is visible at a glance.
 
-Recipes: iron plate (2 ore + 1 coal), copper plate (2 ore + 1 coal),
-gear (2 iron plate), wire (1 copper plate → 2), circuit (1 iron plate + 3 wire,
-tech-gated), flask (1 gear + 1 wire), crystal flask (1 circuit + 2 crystal,
-tech-gated, worth 10 RP).
+### Production tiers
+
+Each tier gates the next behind both a tech and a further-out ore, so research
+and expansion pull each other forward.
+
+| Tier | Unlocked by | Key recipes | Research value |
+|---|---|---|---|
+| 1 — Basics | — | iron/copper plate, gear, wire, flask | 1 RP |
+| 2 — Electronics | Electronics | circuit (1 iron plate + 3 wire) | — |
+| 3 — Crystal | Crystal Drilling (ore ≥ 40 tiles out) | crystal flask | 10 RP |
+| 4 — Steel | Steel Processing | steel plate (5 iron plate + 2 coal) | — |
+| 5 — Titanium | Deep Drilling (ore ≥ 95 tiles out) | processor (2 circuit + 2 steel + 1 titanium) | — |
+| 6 — Data | Data Analysis | data flask (1 processor + 1 crystal flask) | 120 RP |
+
+### Machine Mk levels (0.6)
+
+Once **Machine Overhaul** is researched, every individual machine can be
+upgraded in place: each level doubles *that machine's* speed, and costs double
+with it (10 steel + 5 circuits at Mk1→Mk2, doubling thereafter). Levels are
+uncapped, so late-game optimisation becomes "which machine deserves the next
+doubling" rather than "place another hundred smelters". The level shows on the
+map and in the building sheet as Mk2, Mk3, …
 
 ### Tech tree
 Research points (RP) come from labs. Two kinds of tech:
 - **Repeatable multipliers** with exponential cost (×3 per level): drill speed,
   smelt speed, craft speed, research speed, manual mining. These never run out.
-- **One-off unlocks:** Electronics (circuits), Crystal Drilling (drills work on
-  crystal), Advanced Flasks (10-RP crystal flasks), Blast Drilling (drill
-  output ×2).
+- **One-off unlocks:** Electronics, Crystal Drilling, Advanced Flasks, Blast
+  Drilling (drill output ×2), Steel Processing, Machine Overhaul (per-machine
+  Mk levels), Deep Drilling (titanium), Processors, Data Analysis. Costs run
+  from 20 RP to 6000 RP, so the tree spans the whole game.
 
 ### Core Deposits (roguelike layer)
 - Rare dense nodes; HP scales with distance from spawn.
 - Damaged by press-and-hold mining (drills can't crack them in 0.1).
-- On destruction: modal offers **1 of 3 perks** from a pool, e.g. drill speed ×2,
-  smelter speed ×2, research ×2, manual mining ×3, 20% drill double-strike,
-  +50% drill yield, core deposits take double damage, instant resource cache.
+- On destruction: modal offers **1 of 3 perks** from a twelve-strong pool —
+  drill/smelter/assembler/research speed ×2, manual mining ×3, 20% drill
+  double-strike, +50% drill yield, double core damage, instant resource cache,
+  half-price machine upgrades, crystal+titanium yield ×3, relay aura +3.
 - Perks stack multiplicatively with each other and with techs — this is the
   engine of the crazy scaling.
 
@@ -223,6 +261,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 0.6 | Steel, titanium, processors and per-machine Mk upgrades |
 | 0.5 | Radial build menu and percentage resource allocation |
 | 0.4 | Build menu, deep zoom, offline finder, subtle auras |
 | 0.3 | Relay transfer grid, minimap, tap-to-build, menu tab |

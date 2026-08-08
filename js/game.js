@@ -104,6 +104,7 @@ const RES_GEN = [
   { res: "coal",      seed: 3041, scale: 12, th: 0.695 },
   { res: "stone",     seed: 4057, scale: 12, th: 0.695 },
   { res: "crystal",   seed: 5077, scale: 14, th: 0.715, minDist: 40 },
+  { res: "titanium",  seed: 6091, scale: 16, th: 0.725, minDist: 95 },
 ];
 
 const CHUNK = 16;
@@ -187,11 +188,30 @@ function drillYieldMult()  { return (techLvl("blastDrilling") ? 2 : 1) * Math.po
 function luckyChance()     { return Math.min(1, 0.2 * perkN("lucky")); }
 function coreDamageMult()  { return Math.pow(2, perkN("sturdy")); }
 
-function machineSpeed(type) {
-  if (type === "smelter") return smeltSpeedMult();
-  if (type === "assembler") return craftSpeedMult();
-  if (type === "lab") return labSpeedMult();
-  return 1;
+// Deep Veins multiplies only the two rarest ores.
+function resYieldMult(res) {
+  return (res === "crystal" || res === "titanium") ? Math.pow(3, perkN("deepveins")) : 1;
+}
+
+/* ---- per-machine upgrade levels ---- */
+function bLevel(b) { return b.lvl || 1; }
+function levelMult(b) { return Math.pow(UPGRADE.speedPerLevel, bLevel(b) - 1); }
+function upgradeCost(b) {
+  const scale = Math.pow(UPGRADE.growth, bLevel(b) - 1) * Math.pow(0.5, perkN("engineer"));
+  const out = {};
+  for (const k in UPGRADE.baseCost) out[k] = Math.max(1, Math.round(UPGRADE.baseCost[k] * scale));
+  return out;
+}
+function canUpgrade(b) {
+  return techLvl("machineOverhaul") > 0 && b.type !== "base";
+}
+
+function machineSpeed(b) {
+  const t = b.type;
+  const base = t === "smelter" ? smeltSpeedMult()
+    : t === "assembler" ? craftSpeedMult()
+    : t === "lab" ? labSpeedMult() : 1;
+  return base * levelMult(b);
 }
 
 /* ============================== transfer grid (relay auras) ============================== */
@@ -202,7 +222,7 @@ function machineSpeed(type) {
 let gridRelays = []; // {x, y, r, active, base}
 
 function relayRadiusOf(type) {
-  return (BUILDINGS[type].radius || 0) + techLvl("relayRange");
+  return (BUILDINGS[type].radius || 0) + techLvl("relayRange") + 3 * perkN("network");
 }
 
 function rebuildCoverage() {
@@ -405,15 +425,16 @@ function tickDrill(b, dt) {
   if (!t || !t.res || t.left <= 0) { b.progress = 0; return; }
   const gate = RESOURCES[t.res].needsTech;
   if (gate && !techLvl(gate)) { b.progress = 0; return; }
-  b.progress += dt * BUILDINGS.drill.baseRate * drillSpeedMult();
+  b.progress += dt * BUILDINGS.drill.baseRate * drillSpeedMult() * levelMult(b);
   const cycles = Math.min(Math.floor(b.progress), t.left);
   if (cycles > 0) {
     b.progress -= cycles;
-    let yield_ = cycles * drillYieldMult();
+    const per = drillYieldMult() * resYieldMult(t.res);
+    let yield_ = cycles * per;
     const luck = luckyChance();
     if (luck > 0) {
       if (cycles <= 16) {
-        for (let i = 0; i < cycles; i++) if (Math.random() < luck) yield_ += drillYieldMult();
+        for (let i = 0; i < cycles; i++) if (Math.random() < luck) yield_ += per;
       } else {
         yield_ *= 1 + luck; // expected value for big batches
       }
@@ -431,7 +452,7 @@ function tickMachine(b, dt) {
   const r = RECIPES[b.recipe];
   if (!r) return;
   if (r.needsTech && !techLvl(r.needsTech)) { b.crafting = false; b.progress = 0; return; }
-  let budget = dt * machineSpeed(b.type);
+  let budget = dt * machineSpeed(b);
   for (let guard = 0; guard < 200; guard++) {
     if (!b.crafting) {
       if (!machineCanAfford(r.in, b.recipe)) return;
@@ -485,7 +506,7 @@ function tickHold(dt) {
     if (!t) { stopHold(); return; }
     if (hold.kind === "res") {
       if (t.left <= 0) { stopHold(); return; }
-      const y = manualMult();
+      const y = manualMult() * resYieldMult(t.res);
       produceItem(t.res, y);
       mineTileUnit(hold.x, hold.y);
       addFloater(hold.x + 0.5, hold.y + 0.2, "+" + fmt(y), ITEMS[t.res].color);
@@ -538,6 +559,7 @@ function offerPerks() {
 function applyPerk(id) {
   state.perks[id] = (state.perks[id] || 0) + 1;
   const p = PERKS.find(q => q.id === id);
+  if (id === "network") rebuildCoverage();
   if (id === "hoard") {
     const amt = Math.round(100 * Math.pow(1.6, state.coresBroken));
     for (const r of ["ironOre", "copperOre", "coal", "stone", "crystal"]) produceItem(r, amt);
@@ -740,6 +762,14 @@ function render() {
       ctx.fillRect(sx + s * 0.12, sy + s * 0.8, s * 0.76 * frac, s * 0.07);
     }
 
+    // upgrade level, bottom-left corner
+    if (bLevel(b) > 1 && s >= 22) {
+      ctx.textAlign = "left";
+      ctx.font = `800 ${Math.max(9, s * 0.2)}px -apple-system, sans-serif`;
+      ctx.fillStyle = "#f2a33c";
+      ctx.fillText("Mk" + bLevel(b), sx + s * 0.12, sy + s * 0.74);
+    }
+
     // item-type badge for buildings near the center of the screen; scales
     // with zoom and disappears once tiles get small
     if (s >= 16) {
@@ -795,29 +825,26 @@ function render() {
     ctx.arc(sx, sy, R, -Math.PI / 2, -Math.PI / 2 + (hold.t / interval) * Math.PI * 2);
     ctx.stroke();
 
-    // callout bubble above the finger so the thumb never hides it
+    // callout above the finger so the thumb never hides it. The ring already
+    // shows swing progress, so this only carries what the ring can't.
     if (t) {
-      const bw = 160, bh = 52;
+      const bw = 134, bh = 38;
       const bx = Math.min(W - bw - 8, Math.max(8, sx - bw / 2));
-      const by = Math.max(8, sy - R - bh - 18);
+      const by = Math.max(8, sy - R - bh - 16);
       ctx.fillStyle = "rgba(26,33,41,.96)";
-      roundRect(bx, by, bw, bh, 12);
+      roundRect(bx, by, bw, bh, 11);
       ctx.fill();
       ctx.strokeStyle = "#f2a33c";
       ctx.lineWidth = 1.5;
-      roundRect(bx, by, bw, bh, 12);
+      roundRect(bx, by, bw, bh, 11);
       ctx.stroke();
       const icon = t.res ? ITEMS[t.res].icon : "core";
       const color = t.res ? ITEMS[t.res].color : "#c48be0";
-      drawIcon(icon, bx + 26, by + bh / 2 - 4, 26, color);
+      drawIcon(icon, bx + 24, by + bh / 2, 24, color);
       ctx.textAlign = "left";
       ctx.fillStyle = "#d8e2ec";
-      ctx.font = "700 14px -apple-system, sans-serif";
-      ctx.fillText(t.res ? fmt(t.left) + " left" : fmt(t.hp - t.dmg) + " HP", bx + 46, by + 24);
-      ctx.fillStyle = "rgba(0,0,0,.5)";
-      ctx.fillRect(bx + 46, by + 32, bw - 60, 6);
-      ctx.fillStyle = "#f2a33c";
-      ctx.fillRect(bx + 46, by + 32, (bw - 60) * Math.min(1, hold.t / interval), 6);
+      ctx.font = "700 15px -apple-system, sans-serif";
+      ctx.fillText(t.res ? fmt(t.left) : fmt(t.hp - t.dmg), bx + 44, by + bh / 2 + 5);
     }
   }
 
@@ -916,10 +943,25 @@ function setMode(name, building) {
 
 /* ---- radial tile menu: icon-only build ring around the tapped tile ---- */
 
+let radial = null; // {tx, ty, items:[{id, btn, cost}]}
+
 function closeRadial() {
+  radial = null;
   el("radial").classList.add("hidden");
   el("radial").innerHTML = "";
   if (currentSheet !== "building") selTile = null;
+}
+
+// Cost pill: shows exactly what a blocked option still needs, live.
+function costPillHtml(type) {
+  const cost = BUILDINGS[type].cost;
+  const parts = [];
+  for (const k in cost) {
+    const short = invGet(k) < cost[k];
+    parts.push(`<span style="color:${short ? "var(--bad)" : "var(--dim)"}">${
+      svgIcon(ITEMS[k].icon, short ? "#e06060" : "#8a99a8")}${cost[k]}</span>`);
+  }
+  return parts.join("");
 }
 
 function openRadial(tx, ty, sx, sy) {
@@ -931,9 +973,9 @@ function openRadial(tx, ty, sx, sy) {
   wrap.innerHTML = "";
   wrap.classList.remove("hidden");
 
-  const R = 74;
-  const cx = Math.min(W - R - 34, Math.max(R + 34, sx));
-  const cy = Math.min(H - R - 90, Math.max(R + 60, sy));
+  const R = 76;
+  const cx = Math.min(W - R - 40, Math.max(R + 40, sx));
+  const cy = Math.min(H - R - 110, Math.max(R + 70, sy));
 
   // center chip: what this tile is
   const t = tileAt(tx, ty);
@@ -943,28 +985,60 @@ function openRadial(tx, ty, sx, sy) {
   chip.style.top = cy + "px";
   chip.innerHTML = t && t.res
     ? svgIcon(ITEMS[t.res].icon, ITEMS[t.res].color) + fmt(t.left)
-    : `<span style="color:var(--dim)">empty</span>`;
+    : `<span style="color:var(--dim)">&mdash;</span>`;
   wrap.appendChild(chip);
+
+  radial = { tx, ty, items: [] };
 
   // ring of building icons, starting at the top
   const step = (Math.PI * 2) / opts.length;
   const start = -Math.PI / 2 - (opts.length > 1 ? step / 2 : 0);
   opts.forEach((id, i) => {
     const a = start + step * i;
-    const blocker = placeBlocker(id, tx, ty);
+    const bx = cx + Math.cos(a) * R, by = cy + Math.sin(a) * R;
     const btn = document.createElement("button");
-    btn.className = "rad-btn " + (blocker ? "no" : "ok");
-    btn.style.left = (cx + Math.cos(a) * R) + "px";
-    btn.style.top = (cy + Math.sin(a) * R) + "px";
-    btn.innerHTML = svgIcon(BUILDINGS[id].icon, blocker ? "#8a99a8" : "#f2c67f");
+    btn.className = "rad-btn";
+    btn.style.left = bx + "px";
+    btn.style.top = by + "px";
+    btn.innerHTML = svgIcon(BUILDINGS[id].icon, "#f2c67f");
     btn.addEventListener("click", ev => {
       ev.stopPropagation();
+      const blocker = placeBlocker(id, tx, ty);
       if (blocker) { toast(BUILDINGS[id].name + ": " + blocker); return; }
       tryPlace(id, tx, ty);
       closeRadial();
     });
     wrap.appendChild(btn);
+
+    const cost = document.createElement("div");
+    cost.className = "rad-cost";
+    cost.style.left = bx + "px";
+    cost.style.top = (by + 30) + "px";
+    wrap.appendChild(cost);
+
+    radial.items.push({ id, btn, cost });
   });
+  refreshRadial();
+}
+
+// Keeps the ring honest as resources tick in: affordable options light up and
+// their cost pills disappear the moment you can pay.
+function refreshRadial() {
+  if (!radial) return;
+  for (const it of radial.items) {
+    const blocker = placeBlocker(it.id, radial.tx, radial.ty);
+    it.btn.className = "rad-btn " + (blocker ? "no" : "ok");
+    it.btn.querySelector("path").setAttribute("fill", blocker ? "#8a99a8" : "#f2c67f");
+    if (!blocker) {
+      it.cost.style.display = "none";
+    } else {
+      it.cost.style.display = "";
+      const html = canAfford(BUILDINGS[it.id].cost)
+        ? `<span style="color:var(--bad)">${svgIcon("relay", "#e06060")}</span>` // in range is the blocker
+        : costPillHtml(it.id);
+      if (it.cost._html !== html) { it.cost.innerHTML = html; it.cost._html = html; }
+    }
+  }
 }
 
 function demolish(tx, ty) {
@@ -1222,28 +1296,24 @@ function renderSheet() {
     }
     bar += `</div>`;
 
-    let h = bar + `<div class="slim">${svgIcon("info", "#8a99a8")}<span>Production is dealt out in these proportions. <b>Stockpile</b> is held back from machines so you can spend it on buildings.</span></div>`;
+    let h = bar;
 
     for (const k of keys) {
       const isStock = k === STOCK;
       const icon = isStock ? svgIcon("crate", "#f2a33c")
         : svgIcon(RECIPES[k].rp ? "flask" : ITEMS[Object.keys(RECIPES[k].out)[0]].icon, colorFor(k));
       const name = isStock ? "Stockpile" : RECIPES[k].name;
-      const sub = isStock ? "Kept for building by hand"
-        : `${RECIPES[k].in[item]} ${ITEMS[item].name} per craft`;
+      const sub = isStock ? "" : `${RECIPES[k].in[item]} per craft`;
       h += `<div class="alloc-row">
         <span class="alloc-swatch" style="background:${share[k] > 0 ? colorFor(k) : "#39424d"}"></span>
         <span class="alloc-icon">${icon}</span>
-        <span class="alloc-name">${name}<small>${sub}</small></span>
+        <span class="alloc-name">${name}${sub ? `<small>${sub}</small>` : ""}</span>
         <span class="alloc-step">
           <button data-w="${k}" data-d="-1" ${ws[k] <= 0 ? "disabled" : ""}>&minus;</button>
           <span class="alloc-pct">${total > 0 ? (share[k] * 100).toFixed(0) + "%" : "—"}</span>
           <button data-w="${k}" data-d="1" ${ws[k] >= 10 ? "disabled" : ""}>+</button>
         </span>
       </div>`;
-    }
-    if (total === 0) {
-      h += `<div class="slim">${svgIcon("lock", "#f2a33c")}<span>Everything is stockpiled — no machine may consume ${ITEMS[item].name}.</span></div>`;
     }
     body.innerHTML = h;
     body.querySelectorAll("[data-w]").forEach(btn =>
@@ -1266,12 +1336,12 @@ function renderSheet() {
       </div>
       <div class="card">
         <span class="card-icon">${svgIcon("marker", "#f2a33c")}</span>
-        <span class="card-main"><div class="card-sub">Lost? Jump back to your Base Beacon at the spawn point.</div></span>
+        <span class="card-main"><div class="card-title">Base Beacon</div></span>
         <button class="btn" data-menu="recenter">Center</button>
       </div>
       <div class="card">
         <span class="card-icon">${svgIcon("trash", "#e06060")}</span>
-        <span class="card-main"><div class="card-sub">Wipe the factory and start a new world.</div></span>
+        <span class="card-main"><div class="card-title">New world</div></span>
         <button class="btn danger" data-menu="reset">Reset</button>
       </div>
       <div class="card">
@@ -1291,8 +1361,7 @@ function renderSheet() {
     let h = `<div class="card">
       <span class="card-icon">${svgIcon("flask", "#8ab4f0")}</span>
       <span class="card-main">
-        <div class="card-title">${fmt(state.rp)} research points ${rateHtml("__rp")}</div>
-        <div class="card-sub">Produced by Labs burning flasks.</div>
+        <div class="card-title">${fmt(state.rp)} RP ${rateHtml("__rp")}</div>
       </span>
     </div>`;
     for (const id in TECHS) {
@@ -1328,7 +1397,7 @@ function renderSheet() {
         </div>`).join("")
       : `<div class="card"><span class="card-icon">${svgIcon("core", "#c48be0")}</span>
          <span class="card-main"><div class="card-title">No perks yet</div>
-         <div class="card-sub">Find a glowing core deposit out in the world and press &amp; hold to crack it. Each one grants a choice of 1 of 3 permanent stacking upgrades.</div></span></div>`;
+         <div class="card-sub">Crack a core deposit</div></span></div>`;
 
   } else if (currentSheet === "inv") {
     title.textContent = "Resources";
@@ -1345,14 +1414,14 @@ function renderSheet() {
           <span class="card-icon">${svgIcon(ITEMS[id].icon, ITEMS[id].color)}</span>
           <span class="card-main">
             <div class="card-title">${ITEMS[id].name} ${rateHtml(id)}</div>
-            <div class="card-sub">${split || (reserveOf(id) ? `Reserved ${fmt(reserveOf(id))}` : "Not used by any recipe yet")}</div>
+            <div class="card-sub">${split || (reserveOf(id) ? `Reserved ${fmt(reserveOf(id))}` : "&mdash;")}</div>
           </span>
           <span class="card-title" style="margin-right:6px">${fmt(invGet(id))}</span>
           ${cons.length ? `<button class="btn ghost lock-btn" data-split="${id}">${svgIcon("expand", "#f2a33c")}</button>` : ""}
           <button class="btn ghost lock-btn" data-lock="${id}">${svgIcon("lock", reserveOf(id) ? "#f2a33c" : "#8a99a8")}<span>${reserveOf(id) ? fmt(reserveOf(id)) : "Off"}</span></button>
         </div>`;
         }).join("")
-      : `<div class="card"><span class="card-main"><div class="card-sub">Nothing yet — press &amp; hold a resource tile to mine it by hand.</div></span></div>`;
+      : "";
     body.querySelectorAll("[data-lock]").forEach(btn =>
       btn.addEventListener("click", () => {
         const id = btn.dataset.lock;
@@ -1368,7 +1437,7 @@ function renderSheet() {
     const b = state.buildings[sheetContext.x + "," + sheetContext.y];
     if (!b) { closeSheet(); return; }
     const spec = BUILDINGS[b.type];
-    title.textContent = spec.name;
+    title.textContent = spec.name + (bLevel(b) > 1 ? " Mk" + bLevel(b) : "");
     if (b.type !== "base") {
       el("sheet-actions").innerHTML = `<button class="icon-btn" data-demo="1">${svgIcon("trash", "#e06060")}</button>`;
       el("sheet-actions").querySelector("[data-demo]").addEventListener("click", () => {
@@ -1378,16 +1447,16 @@ function renderSheet() {
     }
     let h = "";
     if (b._off) {
-      h += `<div class="slim">${svgIcon("relay", "#e06060")}<span><b style="color:var(--bad)">Offline</b> — outside the transfer grid. Chain a Relay from your base to reconnect.</span></div>`;
+      h += `<div class="slim">${svgIcon("relay", "#e06060")}<span style="color:var(--bad)"><b>Offline</b></span></div>`;
     }
     if (b.type === "relay" || b.type === "base") {
-      if (!b._off) h += `<div class="slim">${svgIcon("relay", "#f2c67f")}<span><b>Grid connected</b> &middot; aura radius ${relayRadiusOf(b.type)}</span></div>`;
+      if (!b._off) h += `<div class="slim">${svgIcon("relay", "#f2c67f")}<span><b>${relayRadiusOf(b.type)}</b> tile aura</span></div>`;
     } else if (b.type === "drill") {
       const t = tileAt(b.x, b.y);
       h += `<div class="slim">${t && t.res ? svgIcon(ITEMS[t.res].icon, ITEMS[t.res].color) : svgIcon("trash", "#8a99a8")}<span>${
         t && t.res
-          ? `<b>${ITEMS[t.res].name}</b> &middot; ${fmt(t.left)} left &middot; ${(BUILDINGS.drill.baseRate * drillSpeedMult() * drillYieldMult()).toFixed(2)}/s`
-          : "This tile is mined out."}</span></div>`;
+          ? `<b>${ITEMS[t.res].name}</b> &middot; ${fmt(t.left)} &middot; ${(BUILDINGS.drill.baseRate * drillSpeedMult() * levelMult(b) * drillYieldMult() * resYieldMult(t.res)).toFixed(2)}/s`
+          : "Mined out"}</span></div>`;
     } else {
       const recipes = Object.keys(RECIPES).filter(rid =>
         RECIPES[rid].machine === b.type && (!RECIPES[rid].needsTech || techLvl(RECIPES[rid].needsTech)));
@@ -1400,7 +1469,28 @@ function renderSheet() {
         }).join("") +
         `</div><div class="slim">${svgIcon("info", "#8a99a8")}<span>${recipeDesc(b)}</span></div>`;
     }
+    if (canUpgrade(b)) {
+      const cost = upgradeCost(b);
+      const ok = canAfford(cost);
+      h += `<div class="alloc-row">
+        <span class="alloc-icon">${svgIcon("upgrade", ok ? "#f2a33c" : "#8a99a8")}</span>
+        <span class="alloc-name">Mk${bLevel(b)} &rarr; Mk${bLevel(b) + 1}
+          <small>${Object.keys(cost).map(k =>
+            `<span style="color:${invGet(k) >= cost[k] ? "var(--dim)" : "var(--bad)"}">${cost[k]} ${ITEMS[k].name}</span>`).join(" &middot; ")}</small></span>
+        <button class="btn" data-up="1" ${ok ? "" : "disabled"}>x${UPGRADE.speedPerLevel}</button>
+      </div>`;
+    }
     body.innerHTML = h;
+    const upBtn = body.querySelector("[data-up]");
+    if (upBtn) upBtn.addEventListener("click", () => {
+      const cost = upgradeCost(b);
+      if (!canAfford(cost)) return;
+      payCost(cost);
+      b.lvl = bLevel(b) + 1;
+      if (navigator.vibrate) navigator.vibrate(15);
+      saveGame();
+      renderSheet();
+    });
     body.querySelectorAll("[data-recipe]").forEach(btn =>
       btn.addEventListener("click", () => {
         b.recipe = btn.dataset.recipe;
@@ -1415,7 +1505,7 @@ function recipeDesc(b) {
   if (!r) return "";
   const ins = Object.keys(r.in).map(k => `${r.in[k]} ${ITEMS[k].name}`).join(" + ");
   const outs = r.rp ? `${r.rp} RP` : Object.keys(r.out).map(k => `${r.out[k]} ${ITEMS[k].name}`).join(" + ");
-  const t = (r.time / machineSpeed(b.type)).toFixed(1);
+  const t = (r.time / machineSpeed(b)).toFixed(1);
   return `${ins} &rarr; ${outs} every ${t}s`;
 }
 
@@ -1451,7 +1541,7 @@ function frame(t) {
   updateRates(dt);
   render();
   uiTimer += dt;
-  if (uiTimer > 0.25) { uiTimer = 0; updateTopbar(); }
+  if (uiTimer > 0.25) { uiTimer = 0; updateTopbar(); refreshRadial(); }
   sheetTimer += dt;
   // live-refresh open sheets that show counts, rates or affordability
   if (sheetTimer > 1 && (currentSheet === "build" || currentSheet === "tech" || currentSheet === "inv")) {
@@ -1476,9 +1566,7 @@ function boot() {
   updateTopbar();
   if (!state.seenIntro) {
     state.seenIntro = true;
-    setTimeout(() => toast("Press & hold an ore tile to mine it"), 600);
-    setTimeout(() => toast("Tap a tile to build on it"), 3400);
-    setTimeout(() => toast("Buildings only work inside your relay grid"), 6200);
+    setTimeout(() => toast("Press & hold an ore tile to mine"), 700);
     saveGame();
   }
   setInterval(saveGame, 5000);

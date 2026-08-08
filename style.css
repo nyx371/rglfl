@@ -309,6 +309,23 @@ button.chip { font: inherit; font-size: 13px; font-weight: 700; }
   pointer-events: none;
 }
 .rad-center svg { width: 13px; height: 13px; }
+.rad-cost {
+  position: absolute;
+  transform: translate(-50%, 0);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  background: rgba(16, 20, 24, .96);
+  border: 1px solid #5c3535;
+  border-radius: 7px;
+  padding: 3px 6px;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.rad-cost span { display: inline-flex; align-items: center; gap: 2px; }
+.rad-cost svg { width: 11px; height: 11px; }
 
 /* ---------- allocation editor ---------- */
 .alloc-bar {
