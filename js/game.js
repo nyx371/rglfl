@@ -751,6 +751,43 @@ function render() {
     }
   }
 
+  // placement area: while a build type is armed, wash every tile it can go on
+  // and trace a single outline around the region's boundary.
+  if (mode.name === "place" && !lod) {
+    const type = mode.building;
+    const affordable = canAfford(BUILDINGS[type].cost);
+    const ok = new Set();
+    for (let ty = y0 - 1; ty <= y1; ty++) {
+      for (let tx = x0 - 1; tx <= x1; tx++) {
+        if (optionsForTile(tx, ty).indexOf(type) < 0) continue;
+        const t = tileAt(tx, ty);
+        const gate = t && t.res && RESOURCES[t.res].needsTech;
+        if (gate && !techLvl(gate)) continue;
+        const covered = inCoverage(tx, ty);
+        const [sx, sy] = worldToScreen(tx, ty);
+        if (covered && affordable) {
+          ok.add(tx + "," + ty);
+          ctx.fillStyle = "rgba(111,206,111,.10)";
+        } else {
+          ctx.fillStyle = covered ? "rgba(242,163,60,.05)" : "rgba(224,96,96,.06)";
+        }
+        ctx.fillRect(sx, sy, s + 1, s + 1);
+      }
+    }
+    ctx.strokeStyle = "rgba(126,222,126,.7)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (const key of ok) {
+      const [tx, ty] = key.split(",").map(Number);
+      const [sx, sy] = worldToScreen(tx, ty);
+      if (!ok.has(tx + "," + (ty - 1))) { ctx.moveTo(sx, sy); ctx.lineTo(sx + s, sy); }
+      if (!ok.has(tx + "," + (ty + 1))) { ctx.moveTo(sx, sy + s); ctx.lineTo(sx + s, sy + s); }
+      if (!ok.has((tx - 1) + "," + ty)) { ctx.moveTo(sx, sy); ctx.lineTo(sx, sy + s); }
+      if (!ok.has((tx + 1) + "," + ty)) { ctx.moveTo(sx + s, sy); ctx.lineTo(sx + s, sy + s); }
+    }
+    ctx.stroke();
+  }
+
   // grid (subtle, only when zoomed in)
   if (state.cam.zoom > 0.65) {
     ctx.strokeStyle = "rgba(255,255,255,.035)";
@@ -832,7 +869,7 @@ function render() {
       scale = 0.55 + 0.45 * (1 - Math.pow(1 - k, 3)) + Math.sin(k * Math.PI) * 0.12;
     }
     const fl = b.flash > 0 ? b.flash / 0.3 : 0;
-    if (fl > 0) scale *= 1 + 0.06 * fl;
+    if (fl > 0) scale *= 1 + 0.03 * fl;
 
     ctx.save();
     if (scale !== 1) {
@@ -844,15 +881,16 @@ function render() {
     ctx.fillStyle = isRelay ? "#33302a" : "#2a333e";
     roundRect(sx + s * 0.06, sy + s * 0.06, s * 0.88, s * 0.88, s * 0.14);
     ctx.fill();
+    // Output feedback is a faint inner warmth plus the tiny scale pop above —
+    // deliberately not an outline flash, which strobes across a big factory.
     if (fl > 0) {
-      ctx.fillStyle = `rgba(242,163,60,${0.22 * fl})`;
+      ctx.fillStyle = `rgba(242,163,60,${0.08 * fl})`;
       roundRect(sx + s * 0.06, sy + s * 0.06, s * 0.88, s * 0.88, s * 0.14);
       ctx.fill();
     }
     ctx.strokeStyle = b._off ? "#c05050"
-      : fl > 0 ? `rgba(242,163,60,${0.5 + 0.5 * fl})`
       : (b.type === "base" ? "#f2a33c" : isRelay ? "#8a7448" : "#4a5866");
-    ctx.lineWidth = Math.max(1, s * 0.025) * (fl > 0 ? 1.6 : 1);
+    ctx.lineWidth = Math.max(1, s * 0.025);
     roundRect(sx + s * 0.06, sy + s * 0.06, s * 0.88, s * 0.88, s * 0.14);
     ctx.stroke();
     drawIcon(BUILDINGS[b.type].icon, sx + s / 2, sy + s * 0.47, s * 0.56,
@@ -1054,11 +1092,22 @@ function setMode(name, building) {
   mode.building = building || null;
   const bar = el("placebar");
   if (name === "place") {
-    el("placebar-label").textContent = "Tap tiles to place " + BUILDINGS[building].name + "s";
+    updatePlacebar();
     bar.classList.remove("hidden");
   } else {
     bar.classList.add("hidden");
   }
+}
+
+function updatePlacebar() {
+  if (mode.name !== "place") return;
+  const spec = BUILDINGS[mode.building];
+  const cost = Object.keys(spec.cost).map(k =>
+    `<span class="cost${invGet(k) >= spec.cost[k] ? "" : " short"}">${
+      svgIcon(ITEMS[k].icon, invGet(k) >= spec.cost[k] ? ITEMS[k].color : "#e06060")}${spec.cost[k]}</span>`).join("");
+  const html = `<span class="pb-icon">${svgIcon(spec.icon, "#f2c67f")}</span>${spec.name}<span class="pb-cost">${cost}</span>`;
+  const lab = el("placebar-label");
+  if (lab._html !== html) { lab.innerHTML = html; lab._html = html; }
 }
 
 /* ---- radial tile menu: icon-only build ring around the tapped tile ---- */
@@ -1337,7 +1386,9 @@ function updateTopbar() {
   let html = "";
   for (const id of INV_ORDER) {
     const n = invGet(id);
-    if (n >= 1) html += `<div class="chip"><span class="chip-icon" style="color:${ITEMS[id].color}">${svgIcon(id in ITEMS ? ITEMS[id].icon : "ore", ITEMS[id].color)}</span>${fmt(n)}</div>`;
+    if (!state.seen[id] && n < 1) continue; // fixed order, discovered items stay
+    html += `<div class="chip${n < 1 ? " empty" : ""}"><span class="chip-icon" style="color:${ITEMS[id].color}">${
+      svgIcon(ITEMS[id].icon, ITEMS[id].color)}</span>${fmt(n)}</div>`;
   }
   if (strip._html !== html) { strip.innerHTML = html; strip._html = html; }
 }
@@ -1373,6 +1424,22 @@ function costHtml(cost, rp) {
     h += `<span class="cost ${invGet(k) >= cost[k] ? "" : "short"}">${svgIcon(ITEMS[k].icon, ITEMS[k].color)} ${cost[k]} ${ITEMS[k].name}</span>`;
   }
   return h;
+}
+
+// A row with exactly one action is tappable end to end — the button stays as
+// the affordance, but the whole card is the target.
+function wireRowActions(container) {
+  container.querySelectorAll(".card, .alloc-row").forEach(card => {
+    const btns = card.querySelectorAll("button");
+    if (btns.length !== 1) return;
+    const btn = btns[0];
+    card.classList.add("row-action");
+    if (btn.disabled) { card.classList.add("row-off"); return; }
+    card.addEventListener("click", ev => {
+      if (ev.target.closest("button") === btn) return; // let its own handler fire
+      btn.click();
+    });
+  });
 }
 
 function renderSheet() {
@@ -1623,6 +1690,7 @@ function renderSheet() {
         renderSheet();
       }));
   }
+  wireRowActions(body);
 }
 
 function recipeDesc(b) {
@@ -1666,7 +1734,7 @@ function frame(t) {
   updateRates(dt);
   render();
   uiTimer += dt;
-  if (uiTimer > 0.25) { uiTimer = 0; updateTopbar(); refreshRadial(); }
+  if (uiTimer > 0.25) { uiTimer = 0; updateTopbar(); refreshRadial(); updatePlacebar(); }
   sheetTimer += dt;
   // live-refresh open sheets that show counts, rates or affordability
   if (sheetTimer > 1 && (currentSheet === "build" || currentSheet === "tech" || currentSheet === "inv")) {

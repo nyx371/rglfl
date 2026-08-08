@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 0.7** — see [Version history](#version-history).
+**Current version: 0.8** — see [Version history](#version-history).
 
 ---
 
@@ -56,6 +56,16 @@ wrong.
 6. **One dismissal at a time.** An open transient (the radial ring) swallows
    the next tap and closes; that tap does nothing else. You never open a thing
    by accident while closing another.
+7. **The row is the button.** Where a list row has exactly one action, the
+   whole row is the tap target; the button remains only as the affordance.
+   Thumbs are wide and buttons are small.
+8. **Show the whole answer, not the one tile.** Arming a build washes every
+   legal tile on screen and traces one outline around the region — where the
+   grid reaches, and which ore patches qualify, are then a glance rather than
+   a series of failed taps.
+9. **Feedback must survive repetition.** An effect that fires once is a
+   flourish; the same effect across two hundred machines is a strobe. Machine
+   output is a faint inner warmth and a 3% scale pop — never an outline flash.
 
 ## Game feel
 
@@ -68,8 +78,9 @@ Every action gets physical feedback, all of it cheap canvas work:
   placement, a hard kick when a core deposit cracks. Decays linearly.
 - **Camera easing.** Recenter and offline-jump fly with an ease-out cubic over
   0.45s so you keep your bearings; touching the map cancels an in-flight move.
-- **Machine flash + pop.** Machines pulse gold on each output; newly placed
-  buildings scale in with a slight overshoot.
+- **Machine pop.** Each output gives a faint gold inner wash and a 3% scale
+  pulse; newly placed buildings scale in with a slight overshoot. Kept
+  deliberately quiet so a large factory reads as busy, not flickering.
 - **Core deposits breathe**, their glow and border pulsing so they read as
   special from across the map. On break, the modal is held back ~0.5s so the
   explosion lands first.
@@ -287,6 +298,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 0.8 | Placement area preview, full-row taps, calmer machine flash |
 | 0.7 | Particles, screen shake, eased camera, stable resource list |
 | 0.6 | Steel, titanium, processors and per-machine Mk upgrades |
 | 0.5 | Radial build menu and percentage resource allocation |
