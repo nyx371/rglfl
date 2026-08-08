@@ -7,30 +7,34 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#101418">
 <title>GRIDFORGE</title>
-<link rel="stylesheet" href="style.css?v=20260808092623">
+<link rel="stylesheet" href="style.css?v=20260808103231">
 </head>
 <body>
 <canvas id="game"></canvas>
 
 <div id="topbar">
   <div id="topbar-row">
-    <button id="recenter" class="chip"><span class="chip-icon" data-icon="marker"></span></button>
+    <button id="offline-jump" class="chip hidden"><span class="chip-icon" data-icon="relay"></span><span id="offline-count"></span></button>
     <button id="inv-toggle" class="chip"><span class="chip-icon" data-icon="expand"></span></button>
   </div>
   <div id="inv-strip" class="wrap"></div>
 </div>
 
-<canvas id="minimap" width="220" height="220"></canvas>
-
 <div id="bottombar">
+  <button class="tab" data-panel="build"><span class="tab-icon" data-icon="hammer"></span><span>Build</span></button>
   <button class="tab" data-panel="tech"><span class="tab-icon" data-icon="processor"></span><span>Tech</span></button>
   <button class="tab" data-panel="perks"><span class="tab-icon" data-icon="upgrade"></span><span>Perks</span></button>
   <button class="tab" data-panel="inv"><span class="tab-icon" data-icon="crate"></span><span>Resources</span></button>
   <button class="tab" data-panel="menu"><span class="tab-icon" data-icon="menu"></span><span>Menu</span></button>
 </div>
 
+<div id="placebar" class="hidden">
+  <span id="placebar-label"></span>
+  <button id="placebar-cancel">Done</button>
+</div>
+
 <div id="sheet" class="hidden">
-  <div id="sheet-head"><span id="sheet-title"></span><button id="sheet-close">&times;</button></div>
+  <div id="sheet-head"><span id="sheet-title"></span><div id="sheet-actions"></div><button id="sheet-close">&times;</button></div>
   <div id="sheet-body"></div>
 </div>
 
@@ -40,8 +44,8 @@
 
 <div id="toasts"></div>
 
-<script src="js/icons.js?v=20260808092623"></script>
-<script src="js/data.js?v=20260808092623"></script>
-<script src="js/game.js?v=20260808092623"></script>
+<script src="js/icons.js?v=20260808103231"></script>
+<script src="js/data.js?v=20260808103231"></script>
+<script src="js/game.js?v=20260808103231"></script>
 </body>
 </html>

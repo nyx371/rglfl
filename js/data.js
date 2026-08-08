@@ -1,30 +1,31 @@
 // GRIDFORGE static data: version, items, recipes, buildings, techs, perks.
 
-const VERSION = "0.3";
-const VERSION_SNIPPET = "Relay transfer grid, minimap, tap-to-build, menu tab";
+const VERSION = "0.4";
+const VERSION_SNIPPET = "Build menu, deep zoom, offline finder, subtle auras";
 
 const ITEMS = {
-  ironOre:     { name: "Iron Ore",     icon: "ore",     color: "#a8b6c6" },
-  copperOre:   { name: "Copper Ore",   icon: "ore",     color: "#e0925a" },
-  coal:        { name: "Coal",         icon: "coal",    color: "#5c6670" },
-  stone:       { name: "Stone",        icon: "stone",   color: "#9a9186" },
-  crystal:     { name: "Crystal",      icon: "crystal", color: "#7fd4e8" },
-  ironPlate:   { name: "Iron Plate",   icon: "plate",   color: "#c9d6e4" },
-  copperPlate: { name: "Copper Plate", icon: "plate",   color: "#f0a266" },
-  gear:        { name: "Gear",         icon: "gear",    color: "#b8c4d0" },
-  wire:        { name: "Wire",         icon: "wire",    color: "#f0b070" },
-  circuit:     { name: "Circuit",      icon: "circuit", color: "#7fe89a" },
+  ironOre:     { name: "Iron Ore",     icon: "ore",     color: "#7fb3f0" },
+  copperOre:   { name: "Copper Ore",   icon: "ore",     color: "#ff8f4d" },
+  coal:        { name: "Coal",         icon: "coal",    color: "#3d444d" },
+  stone:       { name: "Stone",        icon: "stone",   color: "#cdb389" },
+  crystal:     { name: "Crystal",      icon: "crystal", color: "#5ee6ff" },
+  ironPlate:   { name: "Iron Plate",   icon: "plate",   color: "#d9e6f5" },
+  copperPlate: { name: "Copper Plate", icon: "plate",   color: "#ffb377" },
+  gear:        { name: "Gear",         icon: "gear",    color: "#aeb9c6" },
+  wire:        { name: "Wire",         icon: "wire",    color: "#ffd166" },
+  circuit:     { name: "Circuit",      icon: "circuit", color: "#69e884" },
   flask:       { name: "Flask",        icon: "flask",   color: "#8ab4f0" },
-  crystalFlask:{ name: "Crystal Flask",icon: "flask",   color: "#7fd4e8" },
+  crystalFlask:{ name: "Crystal Flask",icon: "flask",   color: "#5ee6ff" },
 };
 
-// Resource tile types (what drills / manual mining yield)
+// Resource tile types (what drills / manual mining yield).
+// Tile colors are pushed apart so fields read distinctly at any zoom.
 const RESOURCES = {
-  ironOre:   { tileColor: "#43596e", needsTech: null },
-  copperOre: { tileColor: "#6e5138", needsTech: null },
-  coal:      { tileColor: "#30363e", needsTech: null },
-  stone:     { tileColor: "#575048", needsTech: null },
-  crystal:   { tileColor: "#2c5e6b", needsTech: "crystalDrilling" },
+  ironOre:   { tileColor: "#2e4a70", needsTech: null },
+  copperOre: { tileColor: "#77401f", needsTech: null },
+  coal:      { tileColor: "#15181d", needsTech: null },
+  stone:     { tileColor: "#635640", needsTech: null },
+  crystal:   { tileColor: "#0e5a6e", needsTech: "crystalDrilling" },
 };
 
 // Recipes. time in seconds at 1x speed.

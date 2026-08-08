@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 0.3** — see [Version history](#version-history).
+**Current version: 0.4** — see [Version history](#version-history).
 
 ---
 
@@ -60,15 +60,22 @@ perk choice ← crack core deposit ← expand outward ← research tech
   large progress ring extends well past the thumb, and a callout bubble above
   the finger shows the mined item, amount left, and swing progress (0.2 —
   sized so your own thumb never hides the feedback).
-- **Build (0.3):** tap any terrain tile to open a contextual sheet that offers
-  only the buildings that make sense there (ore tile → Drill; open ground →
-  Smelter/Assembler/Lab/Relay), with the blocking reason spelled out when one
-  can't be built (out of grid range, missing tech, unaffordable). Demolish
-  lives in the building's own sheet and refunds 50%.
-- **Navigation (0.3):** a recenter button and a minimal always-on minimap
-  (patches, buildings, relay auras, spawn cross, viewport box) sit in the top
-  corners; tapping either the button or the minimap jumps back to the Base
-  Beacon at spawn.
+- **Build (0.3, expanded 0.4):** two equivalent flows. *Tap-on-grid:* tap any
+  terrain tile for a contextual sheet offering only the buildings that make
+  sense there (ore tile → Drill or Relay; open ground → the rest), with
+  blocking reasons spelled out. *Build menu:* pick a building from the Build
+  tab, then tap tiles to place it repeatedly — ideal for chaining relays —
+  until you hit Done. Demolish lives in the building sheet's header and
+  refunds 50%.
+- **Navigation (0.4):** the dedicated minimap is gone — instead the camera
+  zooms out far enough (to 0.12x) that the world *becomes* the minimap, with
+  a low-detail render mode (flat color fields, no icons) keeping it fast.
+  A red chip in the top bar appears whenever buildings are offline and cycles
+  the camera through them. Center-on-base lives in the Menu sheet.
+- **Selection (0.4):** the tapped building or tile is marked with a dashed
+  highlight while its sheet is open. Relay auras are barely visible by
+  default; selecting a relay (or placing relays from the build menu) lights
+  them up.
 - Double-tap zoom, text selection, and the iOS long-press magnifier are all
   suppressed — long-press is a *game verb* here.
 
@@ -142,9 +149,12 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
   their rate live at the top of the Tech sheet. The Menu sheet holds the
   version + what's-new snippet, recenter, reset, and icon attribution — the
   version number is no longer shown on the map screen.
-- **Structure badges (0.2):** buildings near the center of the screen get a
-  small circular overlay showing the item they're currently mining/crafting,
-  fading out toward the screen edges to keep the map readable.
+- **Structure badges (0.2, tuned 0.4):** buildings near the center of the
+  screen get a small circular overlay showing the item they're currently
+  mining/crafting, fading out toward the screen edges. Badges draw above all
+  buildings, scale down with zoom, and vanish once tiles get small. Resource
+  item/tile colors are pushed far apart (blue iron, orange copper, near-black
+  coal, tan stone, cyan crystal) so fields read distinctly at any zoom.
 - **Bottom bar:** Build / Tech / Perks / Inventory sheet toggles.
 - **Sheets** slide up from the bottom; the map stays live behind them.
 - All symbols are SVG path icons from [game-icons.net](https://game-icons.net)
@@ -172,6 +182,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 0.4 | Build menu, deep zoom, offline finder, subtle auras |
 | 0.3 | Relay transfer grid, minimap, tap-to-build, menu tab |
 | 0.2 | Mining callout, resource reserves, rates, structure badges |
 | 0.1 | Drills, smelting, crafting, tech tree, core deposit perks |

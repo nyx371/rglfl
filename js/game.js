@@ -68,7 +68,10 @@ function freshState() {
   };
 }
 
+let resetting = false; // blocks autosave/pagehide saves from resurrecting a wiped save
+
 function saveGame() {
+  if (resetting) return;
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch (e) { /* storage full/blocked */ }
 }
 
@@ -221,12 +224,23 @@ function rebuildCoverage() {
       }
     }
   }
-  // cache per-building coverage
+  // cache per-building coverage / offline status
+  offlineList = [];
   for (const key in state.buildings) {
     const b = state.buildings[key];
     b._cov = inCoverage(b.x, b.y);
+    if (b.type === "relay" || b.type === "base") {
+      const r = gridRelays.find(q => q.x === b.x && q.y === b.y);
+      b._off = !(r && r.active);
+    } else {
+      b._off = !b._cov;
+    }
+    if (b._off) offlineList.push(b);
   }
 }
+
+let offlineList = [];
+let offlineIdx = 0;
 
 function inCoverage(tx, ty) {
   for (const r of gridRelays) {
@@ -502,6 +516,8 @@ function render() {
   const x0 = Math.floor(wx0), y0 = Math.floor(wy0);
   const x1 = Math.ceil(wx1), y1 = Math.ceil(wy1);
 
+  const lod = s < 14; // deep zoom: flat colors only, no icons or bars
+
   for (let ty = y0; ty < y1; ty++) {
     for (let tx = x0; tx < x1; tx++) {
       const [sx, sy] = worldToScreen(tx, ty);
@@ -512,6 +528,11 @@ function render() {
       const t = tileAt(tx, ty);
       if (t && t.res) {
         const depleted = t.left <= 0;
+        if (lod) {
+          ctx.fillStyle = depleted ? "#20262d" : ITEMS[t.res].color;
+          ctx.fillRect(sx, sy, s + 1, s + 1);
+          continue;
+        }
         ctx.fillStyle = depleted ? "#20262d" : RESOURCES[t.res].tileColor;
         ctx.fillRect(sx + s * 0.04, sy + s * 0.04, s * 0.92, s * 0.92);
         if (!depleted) {
@@ -524,6 +545,11 @@ function render() {
           }
         }
       } else if (t && t.core) {
+        if (lod) {
+          ctx.fillStyle = "#c48be0";
+          ctx.fillRect(sx - s * 0.2, sy - s * 0.2, s * 1.4, s * 1.4);
+          continue;
+        }
         // oversized heavy node
         ctx.fillStyle = "#171321";
         ctx.fillRect(sx - s * 0.2, sy - s * 0.2, s * 1.4, s * 1.4);
@@ -556,23 +582,33 @@ function render() {
     ctx.stroke();
   }
 
-  // relay auras (under buildings)
+  // relay auras (under buildings). Barely visible by default; a selected
+  // relay (its sheet open) or active relay-placement mode lights them up.
+  let strongRelay = null;
+  if (currentSheet === "building" && sheetContext) {
+    const sb = state.buildings[sheetContext.x + "," + sheetContext.y];
+    if (sb && (sb.type === "relay" || sb.type === "base")) strongRelay = sb;
+  }
+  const placingRelay = mode.name === "place" && mode.building === "relay";
   for (const r of gridRelays) {
     const [cx, cy] = worldToScreen(r.x + 0.5, r.y + 0.5);
     const rp = r.r * s;
     if (cx + rp < -40 || cx - rp > W + 40 || cy + rp < -40 || cy - rp > H + 40) continue;
+    const strong = placingRelay || (strongRelay && strongRelay.x === r.x && strongRelay.y === r.y);
     ctx.beginPath();
     ctx.arc(cx, cy, rp, 0, Math.PI * 2);
     if (r.active) {
-      ctx.fillStyle = "rgba(242,163,60,.045)";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(242,163,60,.35)";
+      if (strong) {
+        ctx.fillStyle = "rgba(242,163,60,.06)";
+        ctx.fill();
+      }
+      ctx.strokeStyle = strong ? "rgba(242,163,60,.6)" : "rgba(242,163,60,.07)";
       ctx.setLineDash([]);
     } else {
-      ctx.strokeStyle = "rgba(224,96,96,.5)";
+      ctx.strokeStyle = strong ? "rgba(224,96,96,.7)" : "rgba(224,96,96,.15)";
       ctx.setLineDash([6, 6]);
     }
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = strong ? 2 : 1.5;
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -587,22 +623,30 @@ function render() {
     ctx.setLineDash([]);
   }
 
-  // buildings
+  // buildings (badges collected here, drawn after the loop so they always
+  // sit above neighboring buildings)
+  const badges = [];
   for (const key in state.buildings) {
     const b = state.buildings[key];
     if (b.x < x0 - 1 || b.x > x1 || b.y < y0 - 1 || b.y > y1) continue;
     const [sx, sy] = worldToScreen(b.x, b.y);
     const isRelay = b.type === "relay" || b.type === "base";
-    const uncov = !b._cov && !isRelay;
+
+    if (lod) {
+      ctx.fillStyle = b._off ? "#e06060" : isRelay ? "#f2a33c" : "#e8eef4";
+      ctx.fillRect(sx, sy, s + 1, s + 1);
+      continue;
+    }
+
     ctx.fillStyle = isRelay ? "#33302a" : "#2a333e";
     roundRect(sx + s * 0.06, sy + s * 0.06, s * 0.88, s * 0.88, s * 0.14);
     ctx.fill();
-    ctx.strokeStyle = uncov ? "#a04848" : (b.type === "base" ? "#f2a33c" : isRelay ? "#8a7448" : "#4a5866");
+    ctx.strokeStyle = b._off ? "#c05050" : (b.type === "base" ? "#f2a33c" : isRelay ? "#8a7448" : "#4a5866");
     ctx.lineWidth = Math.max(1, s * 0.025);
     roundRect(sx + s * 0.06, sy + s * 0.06, s * 0.88, s * 0.88, s * 0.14);
     ctx.stroke();
     drawIcon(BUILDINGS[b.type].icon, sx + s / 2, sy + s * 0.47, s * 0.56,
-      uncov ? "#8a6a6a" : isRelay ? "#f2c67f" : "#dfe8f2", uncov ? 0.7 : 1);
+      b._off ? "#8a6a6a" : isRelay ? "#f2c67f" : "#dfe8f2", b._off ? 0.7 : 1);
     // progress
     let frac = 0;
     if (b.type === "drill") frac = b.progress;
@@ -614,27 +658,35 @@ function render() {
       ctx.fillRect(sx + s * 0.12, sy + s * 0.8, s * 0.76 * frac, s * 0.07);
     }
 
-    // item-type badge, shown for buildings near the center of the screen
-    const dc = Math.hypot(sx + s / 2 - W / 2, sy + s / 2 - H / 2);
-    const R0 = Math.min(W, H) * 0.38;
-    if (dc < R0 * 1.25) {
-      const badge = badgeFor(b);
-      if (badge) {
-        const alpha = Math.min(1, Math.max(0, 1 - (dc - R0) / (R0 * 0.25)));
-        const bs = Math.max(17, s * 0.38);
-        const bx2 = sx + s * 0.92, by2 = sy + s * 0.08;
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = "rgba(16,20,24,.95)";
-        ctx.beginPath();
-        ctx.arc(bx2, by2, bs / 2 + 2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = badge.color;
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-        drawIcon(badge.icon, bx2, by2, bs * 0.72, badge.color, alpha);
-        ctx.globalAlpha = 1;
+    // item-type badge for buildings near the center of the screen; scales
+    // with zoom and disappears once tiles get small
+    if (s >= 16) {
+      const dc = Math.hypot(sx + s / 2 - W / 2, sy + s / 2 - H / 2);
+      const R0 = Math.min(W, H) * 0.38;
+      if (dc < R0 * 1.25) {
+        const badge = badgeFor(b);
+        if (badge) {
+          badges.push({
+            x: sx + s * 0.92, y: sy + s * 0.08,
+            icon: badge.icon, color: badge.color,
+            size: Math.min(22, s * 0.38),
+            alpha: Math.min(1, Math.max(0, 1 - (dc - R0) / (R0 * 0.25))),
+          });
+        }
       }
     }
+  }
+  for (const g of badges) {
+    ctx.globalAlpha = g.alpha;
+    ctx.fillStyle = "rgba(16,20,24,.95)";
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, g.size / 2 + 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = g.color;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    drawIcon(g.icon, g.x, g.y, g.size * 0.72, g.color, g.alpha);
+    ctx.globalAlpha = 1;
   }
 
   // hold-mining feedback: highlighted tile, big ring past the thumb, callout bubble
@@ -733,7 +785,7 @@ function optionsForTile(tx, ty) {
   const t = tileAt(tx, ty);
   if (state.buildings[tx + "," + ty]) return [];
   if (t && t.core) return [];
-  if (t && t.res && t.left > 0) return ["drill"];
+  if (t && t.res && t.left > 0) return ["drill", "relay"];
   return ["smelter", "assembler", "lab", "relay"]; // free or exhausted ground
 }
 
@@ -762,6 +814,22 @@ function tryPlace(type, tx, ty) {
   if (navigator.vibrate) navigator.vibrate(12);
   saveGame();
   return true;
+}
+
+// Build-menu placement mode: pick a building, then tap tiles to place it
+// repeatedly until Done. Coexists with the tap-a-tile contextual sheet.
+const mode = { name: "none", building: null };
+
+function setMode(name, building) {
+  mode.name = name;
+  mode.building = building || null;
+  const bar = el("placebar");
+  if (name === "place") {
+    el("placebar-label").textContent = "Tap tiles to place " + BUILDINGS[building].name + "s";
+    bar.classList.remove("hidden");
+  } else {
+    bar.classList.add("hidden");
+  }
 }
 
 function demolish(tx, ty) {
@@ -824,7 +892,7 @@ canvas.addEventListener("pointermove", e => {
     const [a, b] = [...pointers.values()];
     const d = Math.hypot(a.x - b.x, a.y - b.y);
     if (d > 10) {
-      state.cam.zoom = Math.min(2.5, Math.max(0.35, pinchStart.zoom * (d / pinchStart.d)));
+      state.cam.zoom = Math.min(2.5, Math.max(0.12, pinchStart.zoom * (d / pinchStart.d)));
     }
   }
   e.preventDefault();
@@ -849,6 +917,11 @@ canvas.addEventListener("pointercancel", pointerEnd);
 
 function handleTap(tx, ty) {
   const b = state.buildings[tx + "," + ty];
+  if (mode.name === "place") {
+    if (b) { openBuildingSheet(tx, ty); return; }
+    tryPlace(mode.building, tx, ty); // stay in place mode for chains
+    return;
+  }
   if (b) { openBuildingSheet(tx, ty); return; }
   const t = tileAt(tx, ty);
   if (t && t.core) {
@@ -887,8 +960,16 @@ function initChrome() {
   document.querySelectorAll("[data-icon]").forEach(span => {
     span.innerHTML = svgIcon(span.dataset.icon, "currentColor");
   });
-  el("recenter").addEventListener("click", recenterCamera);
-  el("minimap").addEventListener("click", recenterCamera);
+  el("placebar-cancel").addEventListener("click", () => setMode("none"));
+  el("offline-jump").addEventListener("click", () => {
+    if (!offlineList.length) return;
+    offlineIdx = offlineIdx % offlineList.length;
+    const b = offlineList[offlineIdx++];
+    state.cam.x = b.x + 0.5;
+    state.cam.y = b.y + 0.5;
+    if (state.cam.zoom < 0.5) state.cam.zoom = 0.8;
+    toast(BUILDINGS[b.type].name + " at " + b.x + ", " + b.y + " is offline");
+  });
   // tabs
   document.querySelectorAll("#bottombar .tab").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -913,6 +994,9 @@ function initChrome() {
 const INV_ORDER = Object.keys(ITEMS);
 
 function updateTopbar() {
+  const jump = el("offline-jump");
+  jump.classList.toggle("hidden", offlineList.length === 0);
+  if (offlineList.length) el("offline-count").textContent = offlineList.length;
   const strip = el("inv-strip");
   let html = "";
   for (const id of INV_ORDER) {
@@ -930,7 +1014,7 @@ let sheetContext = null; // for building sheet: {x, y}
 function openSheet(name, ctx2) {
   currentSheet = name;
   sheetContext = ctx2 || null;
-  selTile = name === "tile" ? { x: ctx2.x, y: ctx2.y } : null;
+  selTile = (name === "tile" || name === "building") ? { x: ctx2.x, y: ctx2.y } : null;
   el("sheet").classList.remove("hidden");
   document.querySelectorAll("#bottombar .tab").forEach(b =>
     b.classList.toggle("active", b.dataset.panel === name));
@@ -958,7 +1042,31 @@ function renderSheet() {
   if (!currentSheet) return;
   const body = el("sheet-body");
   const title = el("sheet-title");
-  if (currentSheet === "tile") {
+  el("sheet-actions").innerHTML = "";
+  if (currentSheet === "build") {
+    title.textContent = "Build";
+    let h = "";
+    for (const id in BUILDINGS) {
+      const spec = BUILDINGS[id];
+      if (spec.hidden) continue;
+      const count = Object.values(state.buildings).filter(q => q.type === id).length;
+      h += `<div class="card ${canAfford(spec.cost) ? "" : "locked"}">
+        <span class="card-icon">${svgIcon(spec.icon, "#dfe8f2")}</span>
+        <span class="card-main">
+          <div class="card-title">${spec.name}${count ? ` <span class="lvl">x${count}</span>` : ""}</div>
+          <div class="card-sub">${spec.desc}<br>${costHtml(spec.cost)}</div>
+        </span>
+        <button class="btn" data-pick="${id}">Place</button>
+      </div>`;
+    }
+    body.innerHTML = h;
+    body.querySelectorAll("[data-pick]").forEach(btn =>
+      btn.addEventListener("click", () => {
+        setMode("place", btn.dataset.pick);
+        closeSheet();
+      }));
+
+  } else if (currentSheet === "tile") {
     const { x, y } = sheetContext;
     const t = tileAt(x, y);
     title.textContent = t && t.res
@@ -1024,6 +1132,7 @@ function renderSheet() {
     body.querySelector('[data-menu="recenter"]').addEventListener("click", () => { recenterCamera(); closeSheet(); });
     body.querySelector('[data-menu="reset"]').addEventListener("click", () => {
       if (confirm("Wipe your factory and start over?")) {
+        resetting = true;
         localStorage.removeItem(SAVE_KEY);
         location.reload();
       }
@@ -1103,42 +1212,36 @@ function renderSheet() {
     if (!b) { closeSheet(); return; }
     const spec = BUILDINGS[b.type];
     title.textContent = spec.name;
+    if (b.type !== "base") {
+      el("sheet-actions").innerHTML = `<button class="icon-btn" data-demo="1">${svgIcon("trash", "#e06060")}</button>`;
+      el("sheet-actions").querySelector("[data-demo]").addEventListener("click", () => {
+        demolish(b.x, b.y);
+        closeSheet();
+      });
+    }
     let h = "";
-    if (!b._cov && b.type !== "relay" && b.type !== "base") {
-      h += `<div class="card"><span class="card-icon">${svgIcon("relay", "#e06060")}</span>
-        <span class="card-main"><div class="card-title" style="color:var(--bad)">Offline</div>
-        <div class="card-sub">Outside the transfer grid. Chain a Relay from your base to bring it back online.</div></span></div>`;
+    if (b._off) {
+      h += `<div class="slim">${svgIcon("relay", "#e06060")}<span><b style="color:var(--bad)">Offline</b> — outside the transfer grid. Chain a Relay from your base to reconnect.</span></div>`;
     }
     if (b.type === "relay" || b.type === "base") {
-      const rr = gridRelays.find(q => q.x === b.x && q.y === b.y);
-      h += `<div class="card"><span class="card-icon">${svgIcon("relay", rr && rr.active ? "#f2c67f" : "#e06060")}</span>
-        <span class="card-main"><div class="card-title">${rr && rr.active ? "Grid connected" : "Disconnected"}</div>
-        <div class="card-sub">Aura radius ${relayRadiusOf(b.type)} tiles. Buildings inside a connected aura can send and receive items.${rr && rr.active ? "" : " This relay's aura doesn't reach the rest of the grid."}</div></span></div>`;
+      if (!b._off) h += `<div class="slim">${svgIcon("relay", "#f2c67f")}<span><b>Grid connected</b> &middot; aura radius ${relayRadiusOf(b.type)}</span></div>`;
     } else if (b.type === "drill") {
       const t = tileAt(b.x, b.y);
-      h += `<div class="card"><span class="card-icon">${svgIcon(spec.icon, "#dfe8f2")}</span>
-        <span class="card-main"><div class="card-title">${t && t.res ? ITEMS[t.res].name : "Exhausted"}</div>
-        <div class="card-sub">${t && t.res ? `${fmt(t.left)} left in tile<br>Rate: ${(BUILDINGS.drill.baseRate * drillSpeedMult() * drillYieldMult()).toFixed(2)}/s` : "This tile is mined out."}</div></span></div>`;
+      h += `<div class="slim">${t && t.res ? svgIcon(ITEMS[t.res].icon, ITEMS[t.res].color) : svgIcon("trash", "#8a99a8")}<span>${
+        t && t.res
+          ? `<b>${ITEMS[t.res].name}</b> &middot; ${fmt(t.left)} left &middot; ${(BUILDINGS.drill.baseRate * drillSpeedMult() * drillYieldMult()).toFixed(2)}/s`
+          : "This tile is mined out."}</span></div>`;
     } else {
       const recipes = Object.keys(RECIPES).filter(rid =>
         RECIPES[rid].machine === b.type && (!RECIPES[rid].needsTech || techLvl(RECIPES[rid].needsTech)));
-      h += `<div class="card"><span class="card-main">
-        <div class="card-title">Recipe</div>
-        <div class="recipe-row">` +
+      h += `<div class="recipe-row" style="margin-bottom:8px">` +
         recipes.map(rid => {
           const r = RECIPES[rid];
           const outIcon = r.rp ? "flask" : ITEMS[Object.keys(r.out)[0]].icon;
           const outColor = r.rp ? "#8ab4f0" : ITEMS[Object.keys(r.out)[0]].color;
           return `<button class="recipe-pick ${b.recipe === rid ? "sel" : ""}" data-recipe="${rid}">${svgIcon(outIcon, outColor)} ${r.name}</button>`;
         }).join("") +
-        `</div>
-        <div class="card-sub" style="margin-top:10px">${recipeDesc(b)}</div>
-      </span></div>`;
-    }
-    if (b.type !== "base") {
-      h += `<div class="card"><span class="card-icon">${svgIcon("trash", "#e06060")}</span>
-        <span class="card-main"><div class="card-sub">Demolish for a 50% refund.</div></span>
-        <button class="btn danger" data-demo="1">Demolish</button></div>`;
+        `</div><div class="slim">${svgIcon("info", "#8a99a8")}<span>${recipeDesc(b)}</span></div>`;
     }
     body.innerHTML = h;
     body.querySelectorAll("[data-recipe]").forEach(btn =>
@@ -1147,11 +1250,6 @@ function renderSheet() {
         b.crafting = false; b.progress = 0;
         renderSheet();
       }));
-    const demoBtn = body.querySelector("[data-demo]");
-    if (demoBtn) demoBtn.addEventListener("click", () => {
-      demolish(b.x, b.y);
-      closeSheet();
-    });
   }
 }
 
@@ -1183,68 +1281,11 @@ function buyTech(id) {
   renderSheet();
 }
 
-/* ============================== minimap ============================== */
-
-const mmCanvas = el("minimap");
-const mmCtx = mmCanvas.getContext("2d");
-
-function drawMinimap() {
-  const mw = mmCanvas.width, mh = mmCanvas.height;
-  const T = 3; // canvas px per tile
-  const span = Math.floor(mw / T);
-  const cx = Math.round(state.cam.x - span / 2), cy = Math.round(state.cam.y - span / 2);
-  mmCtx.fillStyle = "#10151a";
-  mmCtx.fillRect(0, 0, mw, mh);
-
-  for (let j = 0; j < span; j++) {
-    for (let i = 0; i < span; i++) {
-      const t = tileAt(cx + i, cy + j);
-      if (!t) continue;
-      if (t.res) {
-        mmCtx.fillStyle = t.left > 0 ? ITEMS[t.res].color : "#2a3138";
-        mmCtx.fillRect(i * T, j * T, T, T);
-      } else if (t.core) {
-        mmCtx.fillStyle = "#c48be0";
-        mmCtx.fillRect(i * T - 1, j * T - 1, T + 2, T + 2);
-      }
-    }
-  }
-  // relay auras
-  for (const r of gridRelays) {
-    mmCtx.beginPath();
-    mmCtx.arc((r.x - cx) * T, (r.y - cy) * T, r.r * T, 0, Math.PI * 2);
-    mmCtx.strokeStyle = r.active ? "rgba(242,163,60,.5)" : "rgba(224,96,96,.5)";
-    mmCtx.lineWidth = 1;
-    mmCtx.stroke();
-  }
-  // buildings
-  for (const key in state.buildings) {
-    const b = state.buildings[key];
-    const isRelay = b.type === "relay" || b.type === "base";
-    mmCtx.fillStyle = isRelay ? "#f2a33c" : "#e8eef4";
-    mmCtx.fillRect((b.x - cx) * T - 1, (b.y - cy) * T - 1, T + 1, T + 1);
-  }
-  // spawn marker
-  const spx = (0 - cx) * T, spy = (0 - cy) * T;
-  mmCtx.strokeStyle = "#f2a33c";
-  mmCtx.lineWidth = 2;
-  mmCtx.beginPath();
-  mmCtx.moveTo(spx - 5, spy); mmCtx.lineTo(spx + 5, spy);
-  mmCtx.moveTo(spx, spy - 5); mmCtx.lineTo(spx, spy + 5);
-  mmCtx.stroke();
-  // viewport
-  const vw = W / tilePx() * T, vh = H / tilePx() * T;
-  mmCtx.strokeStyle = "rgba(216,226,236,.8)";
-  mmCtx.lineWidth = 1.5;
-  mmCtx.strokeRect((state.cam.x - cx) * T - vw / 2, (state.cam.y - cy) * T - vh / 2, vw, vh);
-}
-
 /* ============================== main loop ============================== */
 
 let lastT = 0;
 let uiTimer = 0;
 let sheetTimer = 0;
-let mmTimer = 99;
 
 function frame(t) {
   const dt = Math.min(0.25, (t - lastT) / 1000 || 0);
@@ -1254,11 +1295,9 @@ function frame(t) {
   render();
   uiTimer += dt;
   if (uiTimer > 0.25) { uiTimer = 0; updateTopbar(); }
-  mmTimer += dt;
-  if (mmTimer > 0.5) { mmTimer = 0; drawMinimap(); }
   sheetTimer += dt;
   // live-refresh open sheets that show counts, rates or affordability
-  if (sheetTimer > 1 && (currentSheet === "tile" || currentSheet === "tech" || currentSheet === "inv")) {
+  if (sheetTimer > 1 && (currentSheet === "tile" || currentSheet === "build" || currentSheet === "tech" || currentSheet === "inv")) {
     sheetTimer = 0;
     if (!el("sheet-body").querySelector(":active")) renderSheet();
   }
