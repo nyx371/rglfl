@@ -63,6 +63,7 @@ function freshState() {
     coresBroken: 0,
     reserve: {},        // itemId -> amount machines must leave untouched
     alloc: {},          // itemId -> { recipeId|__stock : weight }
+    seen: {},           // itemId -> 1 once ever obtained; keeps Resources stable
     ui: { invCollapsed: false },
     cam: { x: -0.5, y: 1, zoom: 0.8 },
     seenIntro: false,
@@ -335,6 +336,7 @@ function creditOf(item, key) {
 // Every inflow of an item (mined, crafted, refunded) is split into credits.
 function produceItem(id, n) {
   invAdd(id, n);
+  if (n > 0) state.seen[id] = 1;
   const { keys, share } = allocShares(id);
   if (!credits[id]) credits[id] = {};
   // Cap banked credit so an idle consumer can't drain a fresh stockpile at once.
@@ -405,18 +407,76 @@ function addFloater(wx, wy, txt, color) {
   if (floaters.length > 60) floaters.shift();
 }
 
+/* ---- juice: particles, screen shake, camera easing ---- */
+
+let particles = []; // world-space {wx, wy, vx, vy, age, life, color, r}
+let shake = 0;
+let camAnim = null; // {fx, fy, fz, tx, ty, tz, t, dur}
+
+function burst(wx, wy, color, n, power) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = power * (0.35 + Math.random() * 0.65);
+    particles.push({
+      wx, wy,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp - power * 0.35,
+      age: 0,
+      life: 0.45 + Math.random() * 0.5,
+      color,
+      r: 0.035 + Math.random() * 0.045,
+    });
+  }
+  if (particles.length > 320) particles.splice(0, particles.length - 320);
+}
+
+function addShake(n) { shake = Math.min(26, shake + n); }
+
+function flyTo(x, y, zoom) {
+  camAnim = {
+    fx: state.cam.x, fy: state.cam.y, fz: state.cam.zoom,
+    tx: x, ty: y, tz: zoom == null ? state.cam.zoom : zoom,
+    t: 0, dur: 0.45,
+  };
+}
+
+function tickJuice(dt) {
+  for (const p of particles) {
+    p.age += dt;
+    p.wx += p.vx * dt;
+    p.wy += p.vy * dt;
+    p.vy += 3.2 * dt; // gravity
+    p.vx *= 1 - 1.6 * dt;
+  }
+  particles = particles.filter(p => p.age < p.life);
+
+  if (shake > 0) shake = Math.max(0, shake - dt * 55);
+
+  if (camAnim) {
+    camAnim.t += dt;
+    const k = Math.min(1, camAnim.t / camAnim.dur);
+    const e = 1 - Math.pow(1 - k, 3); // ease-out cubic
+    state.cam.x = camAnim.fx + (camAnim.tx - camAnim.fx) * e;
+    state.cam.y = camAnim.fy + (camAnim.ty - camAnim.fy) * e;
+    state.cam.zoom = camAnim.fz + (camAnim.tz - camAnim.fz) * e;
+    if (k >= 1) camAnim = null;
+  }
+}
+
 function tick(dt) {
   // buildings
   for (const key in state.buildings) {
     const b = state.buildings[key];
     if (b.type === "drill") tickDrill(b, dt);
     else tickMachine(b, dt);
+    if (b.flash > 0) b.flash = Math.max(0, b.flash - dt);
   }
   // manual hold-mining
   if (hold.active) tickHold(dt);
   // floaters
   for (const f of floaters) f.age += dt;
   floaters = floaters.filter(f => f.age < 1.1);
+  tickJuice(dt);
 }
 
 function tickDrill(b, dt) {
@@ -443,6 +503,8 @@ function tickDrill(b, dt) {
     const key = b.x + "," + b.y;
     const d = state.tileDelta[key] || (state.tileDelta[key] = {});
     d.mined = (d.mined || 0) + cycles;
+    b.flash = 0.3;
+    if (particles.length < 200) burst(b.x + 0.5, b.y + 0.5, ITEMS[t.res].color, 2, 0.8);
   }
   if (b.progress > 1) b.progress = 0; // tile ran dry mid-batch
 }
@@ -466,6 +528,11 @@ function tickMachine(b, dt) {
     if (budget < need) { b.progress += budget; return; }
     budget -= need;
     for (const k in jr.out) produceItem(k, jr.out[k]);
+    b.flash = 0.3;
+    const outId = Object.keys(jr.out)[0];
+    if (particles.length < 200) {
+      burst(b.x + 0.5, b.y + 0.5, jr.rp ? "#8ab4f0" : ITEMS[outId].color, 3, 0.9);
+    }
     if (jr.rp) {
       state.rp += jr.rp;
       addFloater(b.x + 0.5, b.y, "+" + jr.rp + " RP", "#8ab4f0");
@@ -510,19 +577,26 @@ function tickHold(dt) {
       produceItem(t.res, y);
       mineTileUnit(hold.x, hold.y);
       addFloater(hold.x + 0.5, hold.y + 0.2, "+" + fmt(y), ITEMS[t.res].color);
+      burst(hold.x + 0.5, hold.y + 0.5, ITEMS[t.res].color, 7, 1.5);
+      addShake(2.5);
       if (navigator.vibrate) navigator.vibrate(5);
     } else {
       const key = hold.x + "," + hold.y;
       const d = state.tileDelta[key] || (state.tileDelta[key] = {});
       d.coreDmg = (d.coreDmg || 0) + manualMult() * coreDamageMult();
       addFloater(hold.x + 0.5, hold.y + 0.2, "-" + fmt(manualMult() * coreDamageMult()), "#c48be0");
+      burst(hold.x + 0.5, hold.y + 0.5, "#c48be0", 6, 1.7);
+      addShake(4);
       if (navigator.vibrate) navigator.vibrate(10);
       if (d.coreDmg >= t.hp) {
         d.broken = true;
         stopHold();
         state.coresBroken++;
+        burst(hold.x + 0.5, hold.y + 0.5, "#c48be0", 70, 4.5);
+        burst(hold.x + 0.5, hold.y + 0.5, "#ffffff", 24, 3.2);
+        addShake(24);
         if (navigator.vibrate) navigator.vibrate([30, 40, 60]);
-        offerPerks();
+        setTimeout(offerPerks, 520); // let the break land before the modal
       }
     }
   }
@@ -600,6 +674,7 @@ function screenToWorld(sx, sy) {
 /* ============================== rendering ============================== */
 
 const GROUND = ["#1d232a", "#1f262d", "#1b2128"];
+const spawnAnim = {}; // "x,y" -> timestamp, drives the placement pop
 
 function drawIcon(name, cx, cy, size, color, alpha) {
   ctx.save();
@@ -612,8 +687,13 @@ function drawIcon(name, cx, cy, size, color, alpha) {
 }
 
 function render() {
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  ctx.clearRect(0, 0, W, H);
+  let shx = 0, shy = 0;
+  if (shake > 0) {
+    shx = (Math.random() - 0.5) * shake;
+    shy = (Math.random() - 0.5) * shake;
+  }
+  ctx.setTransform(DPR, 0, 0, DPR, shx * DPR, shy * DPR);
+  ctx.clearRect(-32, -32, W + 64, H + 64);
   const s = tilePx();
   const [wx0, wy0] = screenToWorld(0, 0);
   const [wx1, wy1] = screenToWorld(W, H);
@@ -654,13 +734,14 @@ function render() {
           ctx.fillRect(sx - s * 0.2, sy - s * 0.2, s * 1.4, s * 1.4);
           continue;
         }
-        // oversized heavy node
+        // oversized heavy node, breathing so it reads as special
+        const pulse = 0.5 + 0.5 * Math.sin(lastT / 620 + (tx + ty));
         ctx.fillStyle = "#171321";
         ctx.fillRect(sx - s * 0.2, sy - s * 0.2, s * 1.4, s * 1.4);
-        ctx.strokeStyle = "#4d3a66";
-        ctx.lineWidth = Math.max(1, s * 0.03);
+        ctx.strokeStyle = `rgba(140,102,184,${0.55 + 0.45 * pulse})`;
+        ctx.lineWidth = Math.max(1, s * 0.03) * (1 + 0.5 * pulse);
         ctx.strokeRect(sx - s * 0.2, sy - s * 0.2, s * 1.4, s * 1.4);
-        drawIcon("core", sx + s / 2, sy + s / 2, s * 1.05, "#c48be0");
+        drawIcon("core", sx + s / 2, sy + s / 2, s * (1.02 + 0.05 * pulse), "#c48be0");
         const frac = 1 - t.dmg / t.hp;
         ctx.fillStyle = "rgba(0,0,0,.5)";
         ctx.fillRect(sx - s * 0.15, sy + s * 1.06, s * 1.3, s * 0.09);
@@ -742,15 +823,41 @@ function render() {
       continue;
     }
 
+    // placement pop + output flash
+    const pop = spawnAnim[key];
+    let scale = 1;
+    if (pop != null) {
+      const k = Math.min(1, (lastT - pop) / 260);
+      if (k >= 1) delete spawnAnim[key];
+      scale = 0.55 + 0.45 * (1 - Math.pow(1 - k, 3)) + Math.sin(k * Math.PI) * 0.12;
+    }
+    const fl = b.flash > 0 ? b.flash / 0.3 : 0;
+    if (fl > 0) scale *= 1 + 0.06 * fl;
+
+    ctx.save();
+    if (scale !== 1) {
+      ctx.translate(sx + s / 2, sy + s / 2);
+      ctx.scale(scale, scale);
+      ctx.translate(-(sx + s / 2), -(sy + s / 2));
+    }
+
     ctx.fillStyle = isRelay ? "#33302a" : "#2a333e";
     roundRect(sx + s * 0.06, sy + s * 0.06, s * 0.88, s * 0.88, s * 0.14);
     ctx.fill();
-    ctx.strokeStyle = b._off ? "#c05050" : (b.type === "base" ? "#f2a33c" : isRelay ? "#8a7448" : "#4a5866");
-    ctx.lineWidth = Math.max(1, s * 0.025);
+    if (fl > 0) {
+      ctx.fillStyle = `rgba(242,163,60,${0.22 * fl})`;
+      roundRect(sx + s * 0.06, sy + s * 0.06, s * 0.88, s * 0.88, s * 0.14);
+      ctx.fill();
+    }
+    ctx.strokeStyle = b._off ? "#c05050"
+      : fl > 0 ? `rgba(242,163,60,${0.5 + 0.5 * fl})`
+      : (b.type === "base" ? "#f2a33c" : isRelay ? "#8a7448" : "#4a5866");
+    ctx.lineWidth = Math.max(1, s * 0.025) * (fl > 0 ? 1.6 : 1);
     roundRect(sx + s * 0.06, sy + s * 0.06, s * 0.88, s * 0.88, s * 0.14);
     ctx.stroke();
     drawIcon(BUILDINGS[b.type].icon, sx + s / 2, sy + s * 0.47, s * 0.56,
       b._off ? "#8a6a6a" : isRelay ? "#f2c67f" : "#dfe8f2", b._off ? 0.7 : 1);
+    ctx.restore();
     // progress
     let frac = 0;
     if (b.type === "drill") frac = b.progress;
@@ -848,6 +955,16 @@ function render() {
     }
   }
 
+  // particles
+  for (const p of particles) {
+    const [px, py] = worldToScreen(p.wx, p.wy);
+    ctx.globalAlpha = Math.max(0, 1 - p.age / p.life);
+    ctx.fillStyle = p.color;
+    const r = Math.max(1.2, p.r * s);
+    ctx.fillRect(px - r, py - r, r * 2, r * 2);
+  }
+  ctx.globalAlpha = 1;
+
   // floaters
   ctx.textAlign = "center";
   ctx.font = `700 ${Math.max(11, s * 0.26)}px -apple-system, sans-serif`;
@@ -920,6 +1037,9 @@ function tryPlace(type, tx, ty) {
     job: null, progress: 0, crafting: false,
   };
   rebuildCoverage();
+  spawnAnim[tx + "," + ty] = lastT;
+  burst(tx + 0.5, ty + 0.5, "#f2c67f", 10, 1.6);
+  addShake(3);
   if (navigator.vibrate) navigator.vibrate(12);
   saveGame();
   return true;
@@ -1048,6 +1168,9 @@ function demolish(tx, ty) {
   const cost = BUILDINGS[b.type].cost;
   for (const k in cost) produceItem(k, Math.floor(cost[k] / 2));
   delete state.buildings[key];
+  delete spawnAnim[key];
+  burst(tx + 0.5, ty + 0.5, "#8a99a8", 12, 1.8);
+  addShake(3);
   rebuildCoverage();
   toast(BUILDINGS[b.type].name + " demolished (50% refund)");
   saveGame();
@@ -1059,8 +1182,10 @@ const pointers = new Map();
 let pinchStart = null;
 let holdTimer = null;
 let suppressTap = false;
+let dismissedRadial = false;
 
 canvas.addEventListener("pointerdown", e => {
+  camAnim = null; // touching the map always wins over an in-flight camera move
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false, t: performance.now() });
   if (pointers.size === 2) {
@@ -1070,7 +1195,10 @@ canvas.addEventListener("pointerdown", e => {
     pinchStart = { d: Math.hypot(a.x - b.x, a.y - b.y), zoom: state.cam.zoom };
   } else if (pointers.size === 1) {
     suppressTap = false;
-    closeRadial(); // a new touch on the map always dismisses the ring first
+    // A touch anywhere on the map dismisses an open ring, and that tap does
+    // nothing else — no ring hops to the new tile, no sheet opens.
+    dismissedRadial = !!radial;
+    closeRadial();
     const [wx, wy] = screenToWorld(e.clientX, e.clientY);
     const tx = Math.floor(wx), ty = Math.floor(wy);
     clearTimeout(holdTimer);
@@ -1126,7 +1254,7 @@ canvas.addEventListener("pointerup", pointerEnd);
 canvas.addEventListener("pointercancel", pointerEnd);
 
 function handleTap(tx, ty, sx, sy) {
-  closeRadial();
+  if (dismissedRadial) { dismissedRadial = false; return; }
   const b = state.buildings[tx + "," + ty];
   if (mode.name === "place") {
     if (b) { openBuildingSheet(tx, ty); return; }
@@ -1162,9 +1290,7 @@ function toast(msg) {
 }
 
 function recenterCamera() {
-  state.cam.x = 0.5;
-  state.cam.y = 0.5;
-  state.cam.zoom = 0.8;
+  flyTo(0.5, 0.5, 0.8);
 }
 
 function initChrome() {
@@ -1177,10 +1303,8 @@ function initChrome() {
     if (!offlineList.length) return;
     offlineIdx = offlineIdx % offlineList.length;
     const b = offlineList[offlineIdx++];
-    state.cam.x = b.x + 0.5;
-    state.cam.y = b.y + 0.5;
-    if (state.cam.zoom < 0.5) state.cam.zoom = 0.8;
-    toast(BUILDINGS[b.type].name + " at " + b.x + ", " + b.y + " is offline");
+    flyTo(b.x + 0.5, b.y + 0.5, Math.max(0.5, state.cam.zoom));
+    toast(BUILDINGS[b.type].name + " · " + b.x + ", " + b.y);
   });
   // tabs
   document.querySelectorAll("#bottombar .tab").forEach(btn => {
@@ -1401,7 +1525,8 @@ function renderSheet() {
 
   } else if (currentSheet === "inv") {
     title.textContent = "Resources";
-    const rows = INV_ORDER.filter(id => invGet(id) >= 1 || reserveOf(id) > 0);
+    // everything ever obtained, in a fixed order, so rows never reshuffle
+    const rows = INV_ORDER.filter(id => state.seen[id] || invGet(id) >= 1 || reserveOf(id) > 0);
     body.innerHTML = rows.length
       ? rows.map(id => {
           const cons = consumersOf(id);
@@ -1410,7 +1535,7 @@ function renderSheet() {
             ? cons.map(k => `${(sh.share[k] * 100).toFixed(0)}% ${RECIPES[k].name}`).join(" · ") +
               (sh.share[STOCK] > 0 ? ` · ${(sh.share[STOCK] * 100).toFixed(0)}% stockpiled` : "")
             : (cons.length ? "All stockpiled" : "");
-          return `<div class="card">
+          return `<div class="card${invGet(id) < 1 ? " empty" : ""}">
           <span class="card-icon">${svgIcon(ITEMS[id].icon, ITEMS[id].color)}</span>
           <span class="card-main">
             <div class="card-title">${ITEMS[id].name} ${rateHtml(id)}</div>
@@ -1559,6 +1684,9 @@ function boot() {
   if (!state.buildings["0,0"] || state.buildings["0,0"].type !== "base") {
     state.buildings["0,0"] = { type: "base", x: 0, y: 0, recipe: null, job: null, progress: 0, crafting: false };
   }
+  // pre-0.7 saves: seed the "ever seen" set from what's on hand
+  if (!state.seen) state.seen = {};
+  for (const id in state.inv) if (state.inv[id] > 0) state.seen[id] = 1;
   rebuildCoverage();
   seedCredits();
   resize();

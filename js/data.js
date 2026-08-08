@@ -1,7 +1,7 @@
 // GRIDFORGE static data: version, items, recipes, buildings, techs, perks.
 
-const VERSION = "0.6";
-const VERSION_SNIPPET = "Steel, titanium, processors and per-machine Mk upgrades";
+const VERSION = "0.7";
+const VERSION_SNIPPET = "Particles, screen shake, eased camera, stable resource list";
 
 const ITEMS = {
   ironOre:     { name: "Iron Ore",     icon: "ore",       color: "#7fb3f0" },

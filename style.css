@@ -139,7 +139,9 @@ button.chip { font: inherit; font-size: 13px; font-weight: 700; }
   flex-direction: column;
   padding-bottom: 8px;
   box-shadow: 0 -10px 30px rgba(0,0,0,.5);
+  animation: sheet-up .19s cubic-bezier(.2,.8,.3,1) both;
 }
+@keyframes sheet-up { from { transform: translateY(14px); opacity: .4; } to { transform: none; opacity: 1; } }
 #sheet-head {
   display: flex;
   align-items: center;
@@ -197,6 +199,7 @@ button.chip { font: inherit; font-size: 13px; font-weight: 700; }
   margin-bottom: 10px;
 }
 .card.locked { opacity: .55; }
+.card.empty .card-icon, .card.empty .card-title { opacity: .45; }
 .card-icon {
   width: 40px; height: 40px;
   flex: 0 0 40px;
@@ -224,6 +227,14 @@ button.chip { font: inherit; font-size: 13px; font-weight: 700; }
   flex: 0 0 auto;
 }
 .btn:disabled { background: #3a4652; color: #78848f; }
+.btn, .tab, .rad-btn, .chip, .recipe-pick, .alloc-step button, .icon-btn {
+  transition: transform .09s ease, opacity .09s ease, border-color .15s ease, background .15s ease;
+}
+.btn:active:not(:disabled), .chip:active, .recipe-pick:active,
+.alloc-step button:active:not(:disabled), .icon-btn:active { transform: scale(.92); }
+.tab:active { transform: scale(.94); }
+.rad-btn:active { transform: scale(.85); }
+.card { transition: opacity .2s ease; }
 .btn.ghost { background: var(--panel); color: var(--text); border: 1px solid var(--edge); }
 .lock-btn { display: inline-flex; align-items: center; gap: 5px; padding: 8px 10px; font-size: 12px; }
 .lock-btn svg { width: 14px; height: 14px; }
@@ -388,7 +399,9 @@ button.chip { font: inherit; font-size: 13px; font-weight: 700; }
   align-items: center;
   justify-content: center;
   padding: 20px;
+  animation: fade-in .22s ease both;
 }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 #modal {
   width: 100%;
   max-width: 400px;
@@ -425,7 +438,13 @@ button.chip { font: inherit; font-size: 13px; font-weight: 700; }
   margin-bottom: 10px;
   color: var(--text);
 }
-.perk-card:active { border-color: var(--accent); }
+.perk-card:active { border-color: var(--accent); transform: scale(.97); }
+.perk-card { animation: perk-in .3s cubic-bezier(.2,.8,.3,1) both; transition: transform .09s ease; }
+.perk-card:nth-of-type(1) { animation-delay: .06s; }
+.perk-card:nth-of-type(2) { animation-delay: .13s; }
+.perk-card:nth-of-type(3) { animation-delay: .20s; }
+@keyframes perk-in { from { transform: translateY(12px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
+#modal h2 { animation: perk-in .3s cubic-bezier(.2,.8,.3,1) both; }
 .perk-card .card-icon { background: #0f1415; }
 
 /* ---------- toasts / float text ---------- */

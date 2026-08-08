@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 0.6** — see [Version history](#version-history).
+**Current version: 0.7** — see [Version history](#version-history).
 
 ---
 
@@ -49,6 +49,32 @@ wrong.
 4. **No instructions in menus.** The interface teaches itself through icons,
    costs and state. Copy is labels and numbers, never a tutorial. Exactly one
    first-run toast covers press-and-hold, which no icon can imply.
+5. **Nothing moves under your thumb.** Lists are keyed to what you've *ever*
+   held, in a fixed order, so a row never shifts position between glances —
+   the Resources sheet keeps depleted items in place, dimmed at 0, rather
+   than dropping them out and reflowing everything below.
+6. **One dismissal at a time.** An open transient (the radial ring) swallows
+   the next tap and closes; that tap does nothing else. You never open a thing
+   by accident while closing another.
+
+## Game feel
+
+Every action gets physical feedback, all of it cheap canvas work:
+
+- **Particles.** World-space sparks in the item's own color: a small puff per
+  drill output, a bigger one per hand-mined swing, gold on placement, grey on
+  demolish. Capped at 320 and budget-gated so a large factory can't flood them.
+- **Screen shake.** Scales with the event — a nudge per swing, a jolt on
+  placement, a hard kick when a core deposit cracks. Decays linearly.
+- **Camera easing.** Recenter and offline-jump fly with an ease-out cubic over
+  0.45s so you keep your bearings; touching the map cancels an in-flight move.
+- **Machine flash + pop.** Machines pulse gold on each output; newly placed
+  buildings scale in with a slight overshoot.
+- **Core deposits breathe**, their glow and border pulsing so they read as
+  special from across the map. On break, the modal is held back ~0.5s so the
+  explosion lands first.
+- **Press feedback.** Every button scales down on touch; sheets slide up,
+  perk cards stagger in.
 
 ## Core loop
 
@@ -261,6 +287,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 0.7 | Particles, screen shake, eased camera, stable resource list |
 | 0.6 | Steel, titanium, processors and per-machine Mk upgrades |
 | 0.5 | Radial build menu and percentage resource allocation |
 | 0.4 | Build menu, deep zoom, offline finder, subtle auras |
