@@ -175,6 +175,10 @@ button.chip { font: inherit; font-size: 13px; font-weight: 700; }
 }
 .slim svg { width: 16px; height: 16px; flex: 0 0 16px; }
 .slim b { color: var(--text); }
+.slim.starve { border-color: #6b552c; background: #241f14; }
+.slim.starve span { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+#placebar.demo { border-color: var(--bad); }
+#placebar.demo #placebar-cancel { background: var(--bad); color: #2a0d0d; }
 #sheet-body {
   overflow-y: auto;
   touch-action: pan-y;

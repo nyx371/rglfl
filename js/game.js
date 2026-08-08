@@ -349,7 +349,7 @@ function creditOf(item, key) {
 // Every inflow of an item (mined, crafted, refunded) is split into credits.
 function produceItem(id, n) {
   invAdd(id, n);
-  if (n > 0) state.seen[id] = 1;
+  if (n > 0) { state.seen[id] = 1; noteProduced(id, n); }
   const { keys, share } = allocShares(id);
   if (!credits[id]) credits[id] = {};
   // Cap banked credit so an idle consumer can't drain a fresh stockpile at once.
@@ -384,31 +384,56 @@ function payMachineCost(cost, recipeId) {
   }
 }
 
-/* ---- per-second rate tracking (display only, not saved) ---- */
-const rates = {};       // itemId -> smoothed items/sec ("__rp" for research)
-let rateSnap = null;
+/* ---- per-second rate tracking (display only, not saved) ----
+   Rates are gross *production*, not net stock change: a plate line running at
+   full tilt reads +5/s whether or not assemblers eat every plate. Consumption
+   is shown by the allocation split and the starvation census instead.        */
+
+const rates = {};       // itemId -> smoothed items produced/sec ("__rp" for research)
+let prodAccum = {};     // itemId -> produced since the last sample
 let rateClock = 0;
+let starved = {};       // itemId -> {stock, alloc} machine counts, sampled each second
+
+function noteProduced(id, n) { prodAccum[id] = (prodAccum[id] || 0) + n; }
 
 function updateRates(dt) {
   rateClock += dt;
   if (rateClock < 1) return;
-  const snap = Object.assign({ __rp: state.rp }, state.inv);
-  if (rateSnap) {
-    const keys = new Set([...Object.keys(snap), ...Object.keys(rateSnap)]);
-    for (const k of keys) {
-      const inst = ((snap[k] || 0) - (rateSnap[k] || 0)) / rateClock;
-      rates[k] = (rates[k] || 0) * 0.6 + inst * 0.4;
+  const keys = new Set([...Object.keys(rates), ...Object.keys(prodAccum)]);
+  for (const k of keys) {
+    const inst = (prodAccum[k] || 0) / rateClock;
+    rates[k] = (rates[k] || 0) * 0.55 + inst * 0.45;
+    if (rates[k] < 0.005) delete rates[k];
+  }
+  prodAccum = {};
+  rateClock = 0;
+  censusStarvation();
+}
+
+// Point-in-time count of machines that can't start, and what's holding them.
+function censusStarvation() {
+  const out = {};
+  for (const key in state.buildings) {
+    const b = state.buildings[key];
+    if (b.type === "drill" || b.type === "relay" || b.type === "base") continue;
+    if (b._off || b.crafting) continue;
+    const r = RECIPES[b.recipe];
+    if (!r || (r.needsTech && !techLvl(r.needsTech))) continue;
+    for (const k in r.in) {
+      const haveStock = invGet(k) - reserveOf(k) >= r.in[k];
+      const haveCredit = creditOf(k, b.recipe) >= r.in[k];
+      if (haveStock && haveCredit) continue;
+      const e = out[k] || (out[k] = { stock: 0, alloc: 0 });
+      if (!haveStock) e.stock++; else e.alloc++;
     }
   }
-  rateSnap = snap;
-  rateClock = 0;
+  starved = out;
 }
 
 function rateHtml(id) {
   const r = rates[id] || 0;
-  if (Math.abs(r) < 0.05) return "";
-  const cls = r > 0 ? "style='color:var(--good)'" : "style='color:var(--bad)'";
-  return `<span class="rate" ${cls}>${r > 0 ? "+" : ""}${r.toFixed(1)}/s</span>`;
+  if (r < 0.05) return "";
+  return `<span class="rate" style="color:var(--good)">+${r.toFixed(1)}/s</span>`;
 }
 
 /* ============================== simulation ============================== */
@@ -544,11 +569,12 @@ function tickMachine(b, dt) {
     b.flash = 0.3;
     const outId = Object.keys(jr.out)[0];
     if (particles.length < 200) {
-      burst(b.x + 0.5, b.y + 0.5, jr.rp ? "#8ab4f0" : ITEMS[outId].color, 3, 0.9);
+      burst(b.x + 0.5, b.y + 0.5, jr.rp ? RP_COLOR : ITEMS[outId].color, 3, 0.9);
     }
     if (jr.rp) {
       state.rp += jr.rp;
-      addFloater(b.x + 0.5, b.y, "+" + jr.rp + " RP", "#8ab4f0");
+      noteProduced("__rp", jr.rp);
+      addFloater(b.x + 0.5, b.y, "+" + jr.rp + " RP", RP_COLOR);
     }
     b.crafting = false;
     b.progress = 0;
@@ -1011,7 +1037,7 @@ function badgeFor(b) {
   }
   const r = RECIPES[b.recipe];
   if (!r) return null;
-  if (r.rp) return { icon: "flask", color: "#8ab4f0" };
+  if (r.rp) return { icon: RP_ICON, color: RP_COLOR };
   const out = Object.keys(r.out)[0];
   return out ? { icon: ITEMS[out].icon, color: ITEMS[out].color } : null;
 }
@@ -1086,7 +1112,8 @@ function setMode(name, building) {
   mode.name = name;
   mode.building = building || null;
   const bar = el("placebar");
-  if (name === "place") {
+  bar.classList.toggle("demo", name === "demolish");
+  if (name === "place" || name === "demolish") {
     updatePlacebar();
     bar.classList.remove("hidden");
   } else {
@@ -1095,13 +1122,18 @@ function setMode(name, building) {
 }
 
 function updatePlacebar() {
+  const lab = el("placebar-label");
+  if (mode.name === "demolish") {
+    const html = `<span class="pb-icon">${svgIcon("trash", "#e06060")}</span>Demolish<span class="pb-cost">50% back</span>`;
+    if (lab._html !== html) { lab.innerHTML = html; lab._html = html; }
+    return;
+  }
   if (mode.name !== "place") return;
   const spec = BUILDINGS[mode.building];
   const cost = Object.keys(spec.cost).map(k =>
     `<span class="cost${invGet(k) >= spec.cost[k] ? "" : " short"}">${
       svgIcon(ITEMS[k].icon, invGet(k) >= spec.cost[k] ? ITEMS[k].color : "#e06060")}${spec.cost[k]}</span>`).join("");
   const html = `<span class="pb-icon">${svgIcon(spec.icon, "#f2c67f")}</span>${spec.name}<span class="pb-cost">${cost}</span>`;
-  const lab = el("placebar-label");
   if (lab._html !== html) { lab.innerHTML = html; lab._html = html; }
 }
 
@@ -1230,13 +1262,21 @@ let dismissedRadial = false;
 
 canvas.addEventListener("pointerdown", e => {
   camAnim = null; // touching the map always wins over an in-flight camera move
-  canvas.setPointerCapture(e.pointerId);
+  // Never let a capture failure abort the handler — that would drop the touch
+  // entirely and leave the map unresponsive.
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not fatal */ }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false, t: performance.now() });
   if (pointers.size === 2) {
     stopHold();
     clearTimeout(holdTimer);
     const [a, b] = [...pointers.values()];
     pinchStart = { d: Math.hypot(a.x - b.x, a.y - b.y), zoom: state.cam.zoom };
+    if (mode.name === "place" || mode.name === "demolish") {
+      paintStroke = new Set();
+      const [wx, wy] = screenToWorld((a.x + b.x) / 2, (a.y + b.y) / 2);
+      paintAt(Math.floor(wx), Math.floor(wy));
+      suppressTap = true;
+    }
   } else if (pointers.size === 1) {
     suppressTap = false;
     // A touch anywhere on the map dismisses an open ring, and that tap does
@@ -1265,6 +1305,16 @@ canvas.addEventListener("pointermove", e => {
     if (hold.active) stopHold();
   }
   p.x = e.clientX; p.y = e.clientY;
+
+  // Two fingers while a build/demolish mode is armed paints instead of
+  // zooming: the midpoint is the brush, every tile it crosses gets built.
+  if (pointers.size === 2 && (mode.name === "place" || mode.name === "demolish")) {
+    const [a, b] = [...pointers.values()];
+    const [wx, wy] = screenToWorld((a.x + b.x) / 2, (a.y + b.y) / 2);
+    paintAt(Math.floor(wx), Math.floor(wy));
+    e.preventDefault();
+    return;
+  }
 
   if (pointers.size === 1 && !hold.active) {
     const s = tilePx();
@@ -1297,9 +1347,20 @@ function pointerEnd(e) {
 canvas.addEventListener("pointerup", pointerEnd);
 canvas.addEventListener("pointercancel", pointerEnd);
 
+let paintStroke = new Set(); // tiles already touched by the current 2-finger drag
+
+function paintAt(tx, ty) {
+  const key = tx + "," + ty;
+  if (paintStroke.has(key)) return;
+  paintStroke.add(key);
+  if (mode.name === "place") tryPlace(mode.building, tx, ty);
+  else if (mode.name === "demolish") demolish(tx, ty);
+}
+
 function handleTap(tx, ty, sx, sy) {
   if (dismissedRadial) { dismissedRadial = false; return; }
   const b = state.buildings[tx + "," + ty];
+  if (mode.name === "demolish") { demolish(tx, ty); return; }
   if (mode.name === "place") {
     if (b) { openBuildingSheet(tx, ty); return; }
     tryPlace(mode.building, tx, ty); // stay in place mode for chains
@@ -1367,8 +1428,8 @@ function updateTopbar() {
   jump.classList.toggle("hidden", offlineList.length === 0);
   if (offlineList.length) el("offline-count").textContent = offlineList.length;
   const strip = el("inv-strip");
-  let html = `<div class="chip rp${state.rp < 1 ? " empty" : ""}"><span class="chip-icon" style="color:#8ab4f0">${
-    svgIcon("flask", "#8ab4f0")}</span>${fmt(state.rp)}</div>`;
+  let html = `<div class="chip rp${state.rp < 1 ? " empty" : ""}"><span class="chip-icon" style="color:${RP_COLOR}">${
+    svgIcon(RP_ICON, RP_COLOR)}</span>${fmt(state.rp)}</div>`;
   for (const id of INV_ORDER) {
     const n = invGet(id);
     if (!state.seen[id] && n < 1) continue; // fixed order, discovered items stay
@@ -1404,7 +1465,7 @@ function closeSheet() {
 
 function costHtml(cost, rp) {
   let h = "";
-  if (rp) h += `<span class="cost ${state.rp >= rp ? "" : "short"}">${svgIcon("flask", "currentColor")} ${fmt(rp)} RP</span>`;
+  if (rp) h += `<span class="cost ${state.rp >= rp ? "" : "short"}">${svgIcon(RP_ICON, "currentColor")} ${fmt(rp)} RP</span>`;
   for (const k in cost) {
     h += `<span class="cost ${invGet(k) >= cost[k] ? "" : "short"}">${svgIcon(ITEMS[k].icon, ITEMS[k].color)} ${cost[k]} ${ITEMS[k].name}</span>`;
   }
@@ -1448,12 +1509,45 @@ function renderSheet() {
         <button class="btn" data-pick="${id}">Place</button>
       </div>`;
     }
+    // an action item, so it leads the sheet rather than trailing it
+    const dry = Object.values(state.buildings).filter(q => q._dry);
+    if (dry.length) {
+      const refund = {};
+      for (const d of dry) {
+        for (const k in BUILDINGS.drill.cost) refund[k] = (refund[k] || 0) + Math.floor(BUILDINGS.drill.cost[k] / 2);
+      }
+      h = `<div class="card">
+        <span class="card-icon">${svgIcon("warn", "#f2a33c")}</span>
+        <span class="card-main">
+          <div class="card-title">${dry.length} exhausted drill${dry.length > 1 ? "s" : ""}</div>
+          <div class="card-sub">${Object.keys(refund).map(k =>
+            `<span class="cost">${svgIcon(ITEMS[k].icon, ITEMS[k].color)}${refund[k]}</span>`).join("")}</div>
+        </span>
+        <button class="btn danger" data-clear="1">Clear</button>
+      </div>` + h;
+    }
+    h += `<div class="card">
+      <span class="card-icon">${svgIcon("trash", "#e06060")}</span>
+      <span class="card-main"><div class="card-title">Demolish</div></span>
+      <button class="btn danger" data-demolish="1">Select</button>
+    </div>`;
     body.innerHTML = h;
     body.querySelectorAll("[data-pick]").forEach(btn =>
       btn.addEventListener("click", () => {
         setMode("place", btn.dataset.pick);
         closeSheet();
       }));
+    body.querySelector("[data-demolish]").addEventListener("click", () => {
+      setMode("demolish");
+      closeSheet();
+    });
+    const clearBtn = body.querySelector("[data-clear]");
+    if (clearBtn) clearBtn.addEventListener("click", () => {
+      const n = dry.length;
+      for (const d of dry) demolish(d.x, d.y);
+      toast(n + " exhausted drill" + (n > 1 ? "s" : "") + " cleared");
+      renderSheet();
+    });
 
   } else if (currentSheet === "alloc") {
     const item = sheetContext.item;
@@ -1463,7 +1557,7 @@ function renderSheet() {
       .addEventListener("click", () => openSheet("inv"));
     const { keys, ws, total, share } = allocShares(item);
     const colorFor = k => k === STOCK ? "#f2a33c"
-      : (RECIPES[k].rp ? "#8ab4f0" : ITEMS[Object.keys(RECIPES[k].out)[0]].color);
+      : (RECIPES[k].rp ? RP_COLOR : ITEMS[Object.keys(RECIPES[k].out)[0]].color);
 
     let bar = `<div class="alloc-bar">`;
     for (const k of keys) {
@@ -1477,7 +1571,7 @@ function renderSheet() {
     for (const k of keys) {
       const isStock = k === STOCK;
       const icon = isStock ? svgIcon("crate", "#f2a33c")
-        : svgIcon(RECIPES[k].rp ? "flask" : ITEMS[Object.keys(RECIPES[k].out)[0]].icon, colorFor(k));
+        : svgIcon(RECIPES[k].rp ? RP_ICON : ITEMS[Object.keys(RECIPES[k].out)[0]].icon, colorFor(k));
       const name = isStock ? "Stockpile" : RECIPES[k].name;
       const sub = isStock ? "" : `${RECIPES[k].in[item]} per craft`;
       h += `<div class="alloc-row">
@@ -1535,7 +1629,7 @@ function renderSheet() {
   } else if (currentSheet === "tech") {
     title.textContent = "Tech";
     let h = `<div class="card">
-      <span class="card-icon">${svgIcon("flask", "#8ab4f0")}</span>
+      <span class="card-icon">${svgIcon(RP_ICON, RP_COLOR)}</span>
       <span class="card-main">
         <div class="card-title">${fmt(state.rp)} RP ${rateHtml("__rp")}</div>
       </span>
@@ -1577,9 +1671,22 @@ function renderSheet() {
 
   } else if (currentSheet === "inv") {
     title.textContent = "Resources";
+    // what's blocking the most machines right now, and why
+    let hint = "";
+    const worst = Object.keys(starved)
+      .map(k => ({ k, n: starved[k].stock + starved[k].alloc, ...starved[k] }))
+      .sort((a, b) => b.n - a.n)[0];
+    if (worst) {
+      const byAlloc = worst.alloc >= worst.stock;
+      // the split icon (same mark as the row's split button) points at the
+      // cause when allocation, not stock, is the thing holding machines up
+      hint = `<div class="slim starve">${svgIcon("warn", "#f2a33c")}<span><b>${worst.n}</b> idle &middot; ${
+        svgIcon(ITEMS[worst.k].icon, ITEMS[worst.k].color)} <b>${ITEMS[worst.k].name}</b>${
+        byAlloc ? " &middot; " + svgIcon("expand", "#f2a33c") : ""}</span></div>`;
+    }
     // everything ever obtained, in a fixed order, so rows never reshuffle
     const rows = INV_ORDER.filter(id => state.seen[id] || invGet(id) >= 1 || reserveOf(id) > 0);
-    body.innerHTML = rows.length
+    body.innerHTML = hint + (rows.length
       ? rows.map(id => {
           const cons = consumersOf(id);
           const sh = cons.length ? allocShares(id) : null;
@@ -1598,7 +1705,7 @@ function renderSheet() {
           <button class="btn ghost lock-btn" data-lock="${id}">${svgIcon("lock", reserveOf(id) ? "#f2a33c" : "#8a99a8")}<span>${reserveOf(id) ? fmt(reserveOf(id)) : "Off"}</span></button>
         </div>`;
         }).join("")
-      : "";
+      : "");
     body.querySelectorAll("[data-lock]").forEach(btn =>
       btn.addEventListener("click", () => {
         const id = btn.dataset.lock;
@@ -1640,8 +1747,8 @@ function renderSheet() {
       h += `<div class="recipe-row" style="margin-bottom:8px">` +
         recipes.map(rid => {
           const r = RECIPES[rid];
-          const outIcon = r.rp ? "flask" : ITEMS[Object.keys(r.out)[0]].icon;
-          const outColor = r.rp ? "#8ab4f0" : ITEMS[Object.keys(r.out)[0]].color;
+          const outIcon = r.rp ? RP_ICON : ITEMS[Object.keys(r.out)[0]].icon;
+          const outColor = r.rp ? RP_COLOR : ITEMS[Object.keys(r.out)[0]].color;
           return `<button class="recipe-pick ${b.recipe === rid ? "sel" : ""}" data-recipe="${rid}">${svgIcon(outIcon, outColor)} ${r.name}</button>`;
         }).join("") +
         `</div><div class="slim">${svgIcon("info", "#8a99a8")}<span>${recipeDesc(b)}</span></div>`;

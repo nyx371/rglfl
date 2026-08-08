@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 0.9** — see [Version history](#version-history).
+**Current version: 1.0** — see [Version history](#version-history).
 
 ---
 
@@ -76,6 +76,15 @@ wrong.
     set on that machine type, falling back to the default only when the
     remembered one is tech-locked. Laying down a row of assemblers is one
     decision, not one per building.
+12. **Bulk work deserves a bulk gesture.** A second finger changes the verb:
+    with a build or demolish armed, a two-finger drag paints along its path
+    instead of panning or zooming, so laying a relay chain or clearing a dead
+    patch is one motion. Repetitive cleanup also gets a single button —
+    "3 exhausted drills · Clear" leads the Build sheet whenever drills have
+    run dry.
+13. **One meaning, one mark.** Research points own the idea icon; the flask
+    stays the craftable item. Reusing a symbol for two things makes a lab's
+    overlay ambiguous with its own ingredient.
 
 ## Game feel
 
@@ -214,8 +223,20 @@ cannot bank forever and then drain a fresh stockpile in one burst.
 Reserves and allocation compose: a reserve is a hard floor on the *stock*,
 allocation is a proportional split of the *flow*.
 
-**Rates (0.2):** the Storage sheet shows a smoothed net items/second next to
-each item, so production vs. consumption balance is visible at a glance.
+**Rates (0.2, corrected 1.0):** each item shows a smoothed **gross production**
+rate — how fast it is being *made*, sampled from production events rather than
+from stock deltas. Net-of-consumption was the original design and it read as
+nonsense: a healthy plate line feeding assemblers showed a negative number,
+punishing the player for the thing they built it to do. Consumption is already
+legible through the allocation split, so the rate answers only "is this line
+running?".
+
+**Starvation census (1.0):** once a second the game counts machines that can't
+start and what is holding each one — empty stock, or an allocation share that
+hasn't credited them. The Resources sheet leads with the worst offender
+("**7** idle · Iron Plate"), tagged with the split icon when the cause is
+allocation rather than supply, which turns "why is nothing happening" into one
+glance.
 
 ### Production tiers
 
@@ -309,6 +330,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 1.0 | Two-finger paint building, starvation hints, gross rates |
 | 0.9 | RP in top bar, sticky recipes, exhausted drill warnings |
 | 0.8 | Placement area preview, full-row taps, calmer machine flash |
 | 0.7 | Particles, screen shake, eased camera, stable resource list |

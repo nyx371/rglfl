@@ -1,7 +1,11 @@
 // GRIDFORGE static data: version, items, recipes, buildings, techs, perks.
 
-const VERSION = "0.9";
-const VERSION_SNIPPET = "RP in top bar, sticky recipes, exhausted drill warnings";
+const VERSION = "1.0";
+const VERSION_SNIPPET = "Two-finger paint building, starvation hints, gross rates";
+
+// Research points get their own mark, distinct from the flask item.
+const RP_ICON = "research";
+const RP_COLOR = "#9ecbff";
 
 const ITEMS = {
   ironOre:     { name: "Iron Ore",     icon: "ore",       color: "#7fb3f0" },
