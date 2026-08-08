@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 1.3** — see [Version history](#version-history).
+**Current version: 1.4** — see [Version history](#version-history).
 
 ---
 
@@ -119,6 +119,31 @@ Every action gets physical feedback, all of it cheap canvas work:
   explosion lands first.
 - **Press feedback.** Every button scales down on touch; sheets slide up,
   perk cards stagger in.
+
+## Sound (1.4)
+
+Every sound is **synthesised at runtime with the Web Audio API** — no audio
+files, so there is nothing to download, nothing to cache-bust, and the whole
+kit costs a few kilobytes of source. Three layers:
+
+- **Ambience.** Two detuned sine voices a fifth apart under a lowpass, each
+  with a slow LFO wobble, giving a barely-there pad.
+- **Factory hum.** Filtered sawtooths whose gain tracks how many machines are
+  *actually running*, on a square-root curve so it swells early and then
+  settles. A stalled factory goes quiet, which is a diagnostic in itself.
+- **Effects and UI.** Short synthesised hits: taps, sheet open/close, a
+  descending buzz for refusals, a thunk for placement, a noise sweep for
+  demolition, an arpeggio for research, a four-note chord for perks, and a
+  long low boom for a cracked core.
+
+The mining sound is tied to the streak — filter cutoff and pitch both climb
+with the ramp — so the rev-up is audible as well as visible. Machine-craft
+ticks are rate-limited to ~9/second and kept very quiet, since at scale they
+would otherwise fire hundreds of times a second (the same "feedback must
+survive repetition" rule as the visual flash).
+
+Audio only starts on the first touch, as browsers require, and the Menu sheet
+carries a sound toggle that persists with the save.
 
 ## Core loop
 
@@ -340,6 +365,30 @@ and expansion pull each other forward.
 | 5 — Titanium | Deep Drilling (ore ≥ 95 tiles out) | processor (2 circuit + 2 steel + 1 titanium) | — |
 | 6 — Data | Data Analysis | data flask (1 processor + 1 crystal flask) | 120 RP |
 
+### Pylons — passive aura towers (1.4)
+
+Three towers project a permanent bonus over everything standing in range. They
+have no recipe and consume nothing; they are pure layout value.
+
+| Pylon | Unlocked by | Effect per Mk |
+|---|---|---|
+| Overclock | Field Projection (900 RP) | +25% speed to drills and machines |
+| Enrichment | Field Projection | +20% drill yield |
+| Insight | Cognition (4000 RP) | +35% research from labs |
+
+Every level raises **both** the strength and the radius (4 tiles at Mk1, +1 per
+level), so upgrading a pylon widens its reach as it deepens — a Mk3 Overclock
+is +75% over 6 tiles. Overlapping pylons **add**, which makes clustering the
+right machines under the right towers the whole puzzle: a dense block of labs
+under two Insight pylons is worth far more than the same labs spread thin.
+
+Two rules keep them honest. A pylon outside the transfer grid projects nothing,
+so the relay network gates them like everything else. And they sit on free
+ground only, so they never compete with drills for ore tiles.
+
+This is a third scaling axis alongside global techs and per-machine Mk levels,
+and it is the only one that rewards *where* you build rather than how much.
+
 ### Machine Mk levels (0.6)
 
 Once **Machine Overhaul** is researched, every individual machine can be
@@ -399,6 +448,8 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 ## Technical notes
 
 - Vanilla JS, zero dependencies, static hosting on GitHub Pages from `main`.
+- All audio is synthesised in `js/audio.js`; the project ships no binary assets
+  at all — icons are embedded SVG path data, sound is oscillators.
 - Canvas 2D renderer; icons drawn as `Path2D` from embedded game-icons path data.
 - `index.html` references assets with `?v=<stamp>` query strings;
   `tools/bump-cache.sh` rewrites the stamp and **must be run before every push**
@@ -418,6 +469,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 1.4 | Synthesised sound, ambience and upgradeable aura pylons |
 | 1.3 | Mining streaks, icon recipes, drills cost iron plates |
 | 1.2 | Hold-to-draw, leaner ore, momentum pan, pinch anchoring |
 | 1.1 | Fixes stock that machines could never consume |

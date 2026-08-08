@@ -1,7 +1,7 @@
 // GRIDFORGE static data: version, items, recipes, buildings, techs, perks.
 
-const VERSION = "1.3";
-const VERSION_SNIPPET = "Mining streaks, icon recipes, drills cost iron plates";
+const VERSION = "1.4";
+const VERSION_SNIPPET = "Synthesised sound, ambience and upgradeable aura pylons";
 
 // Research points get their own mark, distinct from the flask item.
 const RP_ICON = "research";
@@ -92,6 +92,33 @@ const BUILDINGS = {
     placeOn: "free",
     radius: 6,
   },
+  // Pylons: passive aura towers. Each projects a bonus over everything in
+  // radius, stacks additively with other pylons, and grows in both strength
+  // and reach with each Mk level — so upgrading one is also widening it.
+  pylonSpeed: {
+    name: "Overclock Pylon", icon: "pylonSpeed",
+    desc: "Speeds up every drill and machine in range.",
+    cost: { steelPlate: 8, circuit: 6 },
+    placeOn: "free",
+    needsTech: "fieldProjection",
+    aura: { stat: "speed", per: 0.25, radius: 4 },
+  },
+  pylonYield: {
+    name: "Enrichment Pylon", icon: "pylonYield",
+    desc: "Drills in range pull more ore per swing.",
+    cost: { steelPlate: 8, crystal: 10 },
+    placeOn: "free",
+    needsTech: "fieldProjection",
+    aura: { stat: "yield", per: 0.2, radius: 4 },
+  },
+  pylonMind: {
+    name: "Insight Pylon", icon: "pylonMind",
+    desc: "Labs in range squeeze more research from every flask.",
+    cost: { steelPlate: 10, processor: 4 },
+    placeOn: "free",
+    needsTech: "cognition",
+    aura: { stat: "rp", per: 0.35, radius: 4 },
+  },
   base: {
     name: "Base Beacon", icon: "relay",
     desc: "Your landing site. The heart of the transfer grid.",
@@ -119,6 +146,8 @@ const TECHS = {
   deepDrilling:  { name: "Deep Drilling",    icon: "titan",   repeat: false, baseCost: 1200, itemCost: { steelPlate: 60 }, effect: "Drills and picks can mine Titanium" },
   processors:    { name: "Processors",       icon: "processor",repeat: false,baseCost: 2500, itemCost: { steelPlate: 80, crystal: 40 }, effect: "Unlocks the Processor recipe" },
   dataAnalysis:  { name: "Data Analysis",    icon: "flask",   repeat: false, baseCost: 6000, itemCost: { processor: 25 }, effect: "Data Flasks worth 120 RP each" },
+  fieldProjection:{ name: "Field Projection",icon: "pylonSpeed", repeat: false, baseCost: 900, itemCost: { steelPlate: 30, circuit: 30 }, effect: "Unlocks Overclock and Enrichment Pylons" },
+  cognition:     { name: "Cognition",        icon: "pylonMind",  repeat: false, baseCost: 4000, itemCost: { processor: 10 }, effect: "Unlocks the Insight Pylon" },
 };
 
 // Per-machine upgrade track (unlocked by Machine Overhaul). Each level doubles

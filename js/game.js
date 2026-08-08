@@ -67,6 +67,7 @@ function freshState() {
     lastRecipe: {},     // machine type -> last recipe you chose, reused on place
     cam: { x: -0.5, y: 1, zoom: 0.8 },
     seenIntro: false,
+    muted: false,
   };
 }
 
@@ -218,7 +219,7 @@ function machineSpeed(b) {
   const base = t === "smelter" ? smeltSpeedMult()
     : t === "assembler" ? craftSpeedMult()
     : t === "lab" ? labSpeedMult() : 1;
-  return base * levelMult(b);
+  return base * levelMult(b) * auraOf(b, "speed");
 }
 
 /* ============================== transfer grid (relay auras) ============================== */
@@ -253,6 +254,7 @@ function rebuildCoverage() {
     }
   }
   // cache per-building coverage / offline status
+  computePylons();
   for (const key in state.buildings) {
     const b = state.buildings[key];
     b._cov = inCoverage(b.x, b.y);
@@ -291,6 +293,53 @@ function inCoverage(tx, ty) {
     if (r.active && Math.hypot(tx - r.x, ty - r.y) <= r.r) return true;
   }
   return false;
+}
+
+/* ---- pylons: passive aura towers that boost whatever stands in range ---- */
+
+let pylons = []; // {x, y, r, stat, amount}
+
+function pylonRadius(b) {
+  return BUILDINGS[b.type].aura.radius + (bLevel(b) - 1);
+}
+function pylonAmount(b) {
+  return BUILDINGS[b.type].aura.per * bLevel(b);
+}
+
+function computePylons() {
+  pylons = [];
+  for (const key in state.buildings) {
+    const b = state.buildings[key];
+    const spec = BUILDINGS[b.type];
+    if (!spec.aura) continue;
+    // an unpowered pylon projects nothing
+    if (!inCoverage(b.x, b.y)) continue;
+    pylons.push({
+      x: b.x, y: b.y,
+      r: pylonRadius(b),
+      stat: spec.aura.stat,
+      amount: pylonAmount(b),
+    });
+  }
+  // cache each building's total bonus per stat
+  for (const key in state.buildings) {
+    const b = state.buildings[key];
+    b._aura = auraAt(b.x, b.y);
+  }
+}
+
+// Bonuses from overlapping pylons add, so clustering machines under several
+// pylons is the layout puzzle.
+function auraAt(tx, ty) {
+  const out = { speed: 0, yield: 0, rp: 0 };
+  for (const p of pylons) {
+    if (Math.hypot(tx - p.x, ty - p.y) <= p.r) out[p.stat] += p.amount;
+  }
+  return out;
+}
+
+function auraOf(b, stat) {
+  return 1 + ((b._aura && b._aura[stat]) || 0);
 }
 
 /* ============================== inventory ============================== */
@@ -480,6 +529,14 @@ function updateRates(dt) {
   rateClock = 0;
   reconcileAll();
   censusStarvation();
+  // ambience swells with how much of the factory is actually running
+  let busy = 0;
+  for (const key in state.buildings) {
+    const b = state.buildings[key];
+    if (b._off) continue;
+    if (b.crafting || (b.type === "drill" && !b._dry)) busy++;
+  }
+  SFX.setActivity(busy);
 }
 
 // Point-in-time count of machines that can't start, and what's holding them.
@@ -605,11 +662,11 @@ function tickDrill(b, dt) {
   if (!t || !t.res || t.left <= 0) { b.progress = 0; return; }
   const gate = RESOURCES[t.res].needsTech;
   if (gate && !techLvl(gate)) { b.progress = 0; return; }
-  b.progress += dt * BUILDINGS.drill.baseRate * drillSpeedMult() * levelMult(b);
+  b.progress += dt * BUILDINGS.drill.baseRate * drillSpeedMult() * levelMult(b) * auraOf(b, "speed");
   const cycles = Math.min(Math.floor(b.progress), t.left);
   if (cycles > 0) {
     b.progress -= cycles;
-    const per = drillYieldMult() * resYieldMult(t.res);
+    const per = drillYieldMult() * resYieldMult(t.res) * auraOf(b, "yield");
     let yield_ = cycles * per;
     const luck = luckyChance();
     if (luck > 0) {
@@ -650,14 +707,16 @@ function tickMachine(b, dt) {
     budget -= need;
     for (const k in jr.out) produceItem(k, jr.out[k]);
     b.flash = 0.3;
+    SFX.craft();
     const outId = Object.keys(jr.out)[0];
     if (particles.length < 200) {
       burst(b.x + 0.5, b.y + 0.5, jr.rp ? RP_COLOR : ITEMS[outId].color, 3, 0.9);
     }
     if (jr.rp) {
-      state.rp += jr.rp;
-      noteProduced("__rp", jr.rp);
-      addFloater(b.x + 0.5, b.y, "+" + jr.rp + " RP", RP_COLOR);
+      const gained = jr.rp * auraOf(b, "rp");
+      state.rp += gained;
+      noteProduced("__rp", gained);
+      addFloater(b.x + 0.5, b.y, "+" + fmt(gained) + " RP", RP_COLOR);
     }
     b.crafting = false;
     b.progress = 0;
@@ -718,6 +777,7 @@ function tickHold(dt) {
       produceItem(t.res, y);
       mineTileUnit(hold.x, hold.y);
       addFloater(hold.x + 0.5, hold.y + 0.2, "+" + fmt(y), ITEMS[t.res].color);
+      SFX.mine(ramp);
       burst(hold.x + 0.5, hold.y + 0.5, ITEMS[t.res].color, 6 + Math.round(14 * ramp), 1.5 + 1.6 * ramp);
       addShake(2 + 5 * ramp);
       if (navigator.vibrate) navigator.vibrate(4 + Math.round(8 * ramp));
@@ -727,6 +787,7 @@ function tickHold(dt) {
       const dmg = manualMult() * coreDamageMult() * pow;
       d.coreDmg = (d.coreDmg || 0) + dmg;
       addFloater(hold.x + 0.5, hold.y + 0.2, "-" + fmt(dmg), "#c48be0");
+      SFX.mine(ramp);
       burst(hold.x + 0.5, hold.y + 0.5, "#c48be0", 6 + Math.round(14 * ramp), 1.7 + 1.6 * ramp);
       addShake(3 + 6 * ramp);
       if (navigator.vibrate) navigator.vibrate(8 + Math.round(10 * ramp));
@@ -734,6 +795,7 @@ function tickHold(dt) {
         d.broken = true;
         stopHold();
         state.coresBroken++;
+        SFX.core();
         burst(hold.x + 0.5, hold.y + 0.5, "#c48be0", 70, 4.5);
         burst(hold.x + 0.5, hold.y + 0.5, "#ffffff", 24, 3.2);
         addShake(24);
@@ -775,6 +837,7 @@ function offerPerks() {
 function applyPerk(id) {
   state.perks[id] = (state.perks[id] || 0) + 1;
   const p = PERKS.find(q => q.id === id);
+  SFX.perk();
   if (id === "network") rebuildCoverage();
   if (id === "hoard") {
     const amt = Math.round(100 * Math.pow(1.6, state.coresBroken));
@@ -949,6 +1012,30 @@ function render() {
     ctx.setLineDash([7, 5]);
     ctx.strokeRect(sx + 2, sy + 2, s - 4, s - 4);
     ctx.setLineDash([]);
+  }
+
+  // pylon auras — like relay auras, faint unless the pylon is selected
+  let selPylon = null;
+  if (currentSheet === "building" && sheetContext) {
+    const sb = state.buildings[sheetContext.x + "," + sheetContext.y];
+    if (sb && BUILDINGS[sb.type].aura) selPylon = sb;
+  }
+  const PYLON_TINT = { speed: "242,163,60", yield: "126,222,126", rp: "158,203,255" };
+  for (const p of pylons) {
+    const [cx, cy] = worldToScreen(p.x + 0.5, p.y + 0.5);
+    const rp = p.r * s;
+    if (cx + rp < -40 || cx - rp > W + 40 || cy + rp < -40 || cy - rp > H + 40) continue;
+    const strong = selPylon && selPylon.x === p.x && selPylon.y === p.y;
+    const tint = PYLON_TINT[p.stat];
+    ctx.beginPath();
+    ctx.arc(cx, cy, rp, 0, Math.PI * 2);
+    if (strong) {
+      ctx.fillStyle = `rgba(${tint},.08)`;
+      ctx.fill();
+    }
+    ctx.strokeStyle = `rgba(${tint},${strong ? 0.7 : 0.12})`;
+    ctx.lineWidth = strong ? 2 : 1.25;
+    ctx.stroke();
   }
 
   // buildings (badges collected here, drawn after the loop so they always
@@ -1189,12 +1276,19 @@ let selTile = null; // tile highlighted while the tile build sheet is open
 
 // Which buildings make sense on this tile (ignoring cost/coverage, which are
 // reported separately so the sheet can explain *why* something is blocked).
+function buildingUnlocked(id) {
+  const g = BUILDINGS[id].needsTech;
+  return !g || techLvl(g) > 0;
+}
+
 function optionsForTile(tx, ty) {
   const t = tileAt(tx, ty);
   if (state.buildings[tx + "," + ty]) return [];
   if (t && t.core) return [];
-  if (t && t.res && t.left > 0) return ["drill", "relay"];
-  return ["smelter", "assembler", "lab", "relay"]; // free or exhausted ground
+  const list = (t && t.res && t.left > 0)
+    ? ["drill", "relay"]
+    : ["smelter", "assembler", "lab", "relay", "pylonSpeed", "pylonYield", "pylonMind"];
+  return list.filter(buildingUnlocked);
 }
 
 // New machines inherit whatever you last set on that machine type, so laying
@@ -1226,7 +1320,7 @@ function placeBlocker(type, tx, ty) {
 function tryPlace(type, tx, ty) {
   if (optionsForTile(tx, ty).indexOf(type) < 0) { toast("Can't build that here"); return false; }
   const blocker = placeBlocker(type, tx, ty);
-  if (blocker) { toast(blocker); return false; }
+  if (blocker) { SFX.deny(); toast(blocker); return false; }
   payCost(BUILDINGS[type].cost);
   state.buildings[tx + "," + ty] = {
     type, x: tx, y: ty,
@@ -1235,6 +1329,7 @@ function tryPlace(type, tx, ty) {
   };
   rebuildCoverage();
   spawnAnim[tx + "," + ty] = lastT;
+  SFX.place();
   burst(tx + 0.5, ty + 0.5, "#f2c67f", 10, 1.6);
   addShake(3);
   if (navigator.vibrate) navigator.vibrate(12);
@@ -1383,6 +1478,7 @@ function demolish(tx, ty) {
   for (const k in cost) produceItem(k, Math.floor(cost[k] / 2));
   delete state.buildings[key];
   delete spawnAnim[key];
+  SFX.demolish();
   burst(tx + 0.5, ty + 0.5, "#8a99a8", 12, 1.8);
   addShake(3);
   rebuildCoverage();
@@ -1399,6 +1495,7 @@ let suppressTap = false;
 let dismissedRadial = false;
 
 canvas.addEventListener("pointerdown", e => {
+  SFX.start(); SFX.resume(); // audio can only begin on a gesture
   camAnim = null; // touching the map always wins over an in-flight camera move
   panVel = null;
   // Never let a capture failure abort the handler — that would drop the touch
@@ -1645,12 +1742,14 @@ function openSheet(name, ctx2) {
   if (name !== "alloc") closeRadial();
   selTile = name === "building" ? { x: ctx2.x, y: ctx2.y } : null;
   el("sheet").classList.remove("hidden");
+  SFX.sheet();
   document.querySelectorAll("#bottombar .tab").forEach(b =>
     b.classList.toggle("active", b.dataset.panel === name));
   renderSheet();
 }
 
 function closeSheet() {
+  if (currentSheet) SFX.close();
   currentSheet = null;
   sheetContext = null;
   selTile = null;
@@ -1702,7 +1801,7 @@ function renderSheet() {
     let h = "";
     for (const id in BUILDINGS) {
       const spec = BUILDINGS[id];
-      if (spec.hidden) continue;
+      if (spec.hidden || !buildingUnlocked(id)) continue;
       const count = Object.values(state.buildings).filter(q => q.type === id).length;
       h += `<div class="card ${canAfford(spec.cost) ? "afford" : "locked"}">
         <span class="card-icon">${svgIcon(spec.icon, "#dfe8f2")}</span>
@@ -1808,6 +1907,11 @@ function renderSheet() {
         </span>
       </div>
       <div class="card">
+        <span class="card-icon">${svgIcon(state.muted ? "soundOff" : "soundOn", state.muted ? "#8a99a8" : "#6fce6f")}</span>
+        <span class="card-main"><div class="card-title">Sound</div></span>
+        <button class="btn ${state.muted ? "ghost" : ""}" data-menu="mute">${state.muted ? "Off" : "On"}</button>
+      </div>
+      <div class="card">
         <span class="card-icon">${svgIcon("marker", "#f2a33c")}</span>
         <span class="card-main"><div class="card-title">Base Beacon</div></span>
         <button class="btn" data-menu="recenter">Center</button>
@@ -1820,6 +1924,12 @@ function renderSheet() {
       <div class="card">
         <span class="card-main"><div class="card-sub">Icons by lorc, delapouite &amp; faithtoken from game-icons.net (CC BY 3.0).</div></span>
       </div>`;
+    body.querySelector('[data-menu="mute"]').addEventListener("click", () => {
+      state.muted = !state.muted;
+      SFX.setMuted(state.muted);
+      saveGame();
+      renderSheet();
+    });
     body.querySelector('[data-menu="recenter"]').addEventListener("click", () => { recenterCamera(); closeSheet(); });
     body.querySelector('[data-menu="reset"]').addEventListener("click", () => {
       if (confirm("Wipe your factory and start over?")) {
@@ -1936,7 +2046,12 @@ function renderSheet() {
     if (b._off) {
       h += `<div class="slim">${svgIcon("relay", "#e06060")}<span style="color:var(--bad)"><b>Offline</b></span></div>`;
     }
-    if (b.type === "relay" || b.type === "base") {
+    if (spec.aura) {
+      const tintCol = { speed: "#f2a33c", yield: "#7ede7e", rp: RP_COLOR }[spec.aura.stat];
+      const label = { speed: "speed", yield: "drill yield", rp: "research" }[spec.aura.stat];
+      h += `<div class="slim">${svgIcon(spec.icon, tintCol)}<span><b style="color:${tintCol}">+${
+        Math.round(pylonAmount(b) * 100)}%</b> ${label} &middot; <b>${pylonRadius(b)}</b> tiles</span></div>`;
+    } else if (b.type === "relay" || b.type === "base") {
       if (!b._off) h += `<div class="slim">${svgIcon("relay", "#f2c67f")}<span><b>${relayRadiusOf(b.type)}</b> tile aura</span></div>`;
     } else if (b.type === "drill") {
       const t = tileAt(b.x, b.y);
@@ -1982,6 +2097,8 @@ function renderSheet() {
       if (!canAfford(cost)) return;
       payCost(cost);
       b.lvl = bLevel(b) + 1;
+      SFX.upgrade();
+      rebuildCoverage();
       if (navigator.vibrate) navigator.vibrate(15);
       saveGame();
       renderSheet();
@@ -2037,6 +2154,7 @@ function buyTech(id) {
   payCost(items);
   state.techs[id] = lvl + 1;
   if (id === "relayRange") rebuildCoverage();
+  SFX.research();
   toast(t.name + (t.repeat ? " Lv " + (lvl + 1) : "") + " researched");
   if (navigator.vibrate) navigator.vibrate(15);
   saveGame();
@@ -2082,6 +2200,7 @@ function boot() {
   for (const id in state.inv) if (state.inv[id] > 0) state.seen[id] = 1;
   rebuildCoverage();
   seedCredits();
+  SFX.muted = !!state.muted;
   resize();
   initChrome();
   updateTopbar();
