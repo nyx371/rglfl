@@ -56,7 +56,9 @@ function freshState() {
     rp: 0,
     techs: {},          // techId -> level
     perks: {},          // perkId -> count
-    buildings: {},      // "x,y" -> {type, recipe, job, progress, crafting}
+    buildings: {        // "x,y" -> {type, recipe, job, progress, crafting}
+      "0,0": { type: "base", x: 0, y: 0, recipe: null, job: null, progress: 0, crafting: false },
+    },
     tileDelta: {},      // "x,y" -> {mined} or {coreDmg, broken}
     coresBroken: 0,
     reserve: {},        // itemId -> amount machines must leave untouched
@@ -90,12 +92,14 @@ const STARTER_PATCHES = [
   { res: "stone",     x0: -6, y0: -5, x1: -3, y1: -2 },
 ];
 
+// Larger noise scale + higher threshold = sparser fields with more open
+// ground between patches (patches stay a similar size, they just spread out).
 const RES_GEN = [
-  { res: "ironOre",   seed: 1013, scale: 9,  th: 0.660 },
-  { res: "copperOre", seed: 2027, scale: 9,  th: 0.665 },
-  { res: "coal",      seed: 3041, scale: 8,  th: 0.670 },
-  { res: "stone",     seed: 4057, scale: 8,  th: 0.670 },
-  { res: "crystal",   seed: 5077, scale: 10, th: 0.700, minDist: 40 },
+  { res: "ironOre",   seed: 1013, scale: 13, th: 0.685 },
+  { res: "copperOre", seed: 2027, scale: 13, th: 0.690 },
+  { res: "coal",      seed: 3041, scale: 12, th: 0.695 },
+  { res: "stone",     seed: 4057, scale: 12, th: 0.695 },
+  { res: "crystal",   seed: 5077, scale: 14, th: 0.715, minDist: 40 },
 ];
 
 const CHUNK = 16;
@@ -186,6 +190,51 @@ function machineSpeed(type) {
   return 1;
 }
 
+/* ============================== transfer grid (relay auras) ============================== */
+
+// Buildings only operate inside the aura of a relay connected (via overlapping
+// auras) back to the Base Beacon at spawn. Extending the grid = placing relays.
+
+let gridRelays = []; // {x, y, r, active, base}
+
+function relayRadiusOf(type) {
+  return (BUILDINGS[type].radius || 0) + techLvl("relayRange");
+}
+
+function rebuildCoverage() {
+  gridRelays = [];
+  for (const key in state.buildings) {
+    const b = state.buildings[key];
+    if (b.type === "base" || b.type === "relay") {
+      gridRelays.push({ x: b.x, y: b.y, r: relayRadiusOf(b.type), active: false, base: b.type === "base" });
+    }
+  }
+  // BFS from base over overlapping auras
+  const queue = gridRelays.filter(r => r.base);
+  queue.forEach(r => r.active = true);
+  while (queue.length) {
+    const a = queue.pop();
+    for (const b of gridRelays) {
+      if (!b.active && Math.hypot(a.x - b.x, a.y - b.y) <= a.r + b.r) {
+        b.active = true;
+        queue.push(b);
+      }
+    }
+  }
+  // cache per-building coverage
+  for (const key in state.buildings) {
+    const b = state.buildings[key];
+    b._cov = inCoverage(b.x, b.y);
+  }
+}
+
+function inCoverage(tx, ty) {
+  for (const r of gridRelays) {
+    if (r.active && Math.hypot(tx - r.x, ty - r.y) <= r.r) return true;
+  }
+  return false;
+}
+
 /* ============================== inventory ============================== */
 
 function invGet(id) { return state.inv[id] || 0; }
@@ -257,6 +306,7 @@ function tick(dt) {
 }
 
 function tickDrill(b, dt) {
+  if (!b._cov) { b.progress = 0; return; }
   const t = tileAt(b.x, b.y);
   if (!t || !t.res || t.left <= 0) { b.progress = 0; return; }
   const gate = RESOURCES[t.res].needsTech;
@@ -283,6 +333,7 @@ function tickDrill(b, dt) {
 }
 
 function tickMachine(b, dt) {
+  if (!b._cov) return;
   const r = RECIPES[b.recipe];
   if (!r) return;
   if (r.needsTech && !techLvl(r.needsTech)) { b.crafting = false; b.progress = 0; return; }
@@ -505,19 +556,53 @@ function render() {
     ctx.stroke();
   }
 
+  // relay auras (under buildings)
+  for (const r of gridRelays) {
+    const [cx, cy] = worldToScreen(r.x + 0.5, r.y + 0.5);
+    const rp = r.r * s;
+    if (cx + rp < -40 || cx - rp > W + 40 || cy + rp < -40 || cy - rp > H + 40) continue;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rp, 0, Math.PI * 2);
+    if (r.active) {
+      ctx.fillStyle = "rgba(242,163,60,.045)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(242,163,60,.35)";
+      ctx.setLineDash([]);
+    } else {
+      ctx.strokeStyle = "rgba(224,96,96,.5)";
+      ctx.setLineDash([6, 6]);
+    }
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // selected tile (tile build sheet open)
+  if (selTile) {
+    const [sx, sy] = worldToScreen(selTile.x, selTile.y);
+    ctx.strokeStyle = "rgba(242,163,60,.95)";
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([7, 5]);
+    ctx.strokeRect(sx + 2, sy + 2, s - 4, s - 4);
+    ctx.setLineDash([]);
+  }
+
   // buildings
   for (const key in state.buildings) {
     const b = state.buildings[key];
     if (b.x < x0 - 1 || b.x > x1 || b.y < y0 - 1 || b.y > y1) continue;
     const [sx, sy] = worldToScreen(b.x, b.y);
-    ctx.fillStyle = "#2a333e";
+    const isRelay = b.type === "relay" || b.type === "base";
+    const uncov = !b._cov && !isRelay;
+    ctx.fillStyle = isRelay ? "#33302a" : "#2a333e";
     roundRect(sx + s * 0.06, sy + s * 0.06, s * 0.88, s * 0.88, s * 0.14);
     ctx.fill();
-    ctx.strokeStyle = "#4a5866";
+    ctx.strokeStyle = uncov ? "#a04848" : (b.type === "base" ? "#f2a33c" : isRelay ? "#8a7448" : "#4a5866");
     ctx.lineWidth = Math.max(1, s * 0.025);
     roundRect(sx + s * 0.06, sy + s * 0.06, s * 0.88, s * 0.88, s * 0.14);
     ctx.stroke();
-    drawIcon(BUILDINGS[b.type].icon, sx + s / 2, sy + s * 0.47, s * 0.56, "#dfe8f2");
+    drawIcon(BUILDINGS[b.type].icon, sx + s / 2, sy + s * 0.47, s * 0.56,
+      uncov ? "#8a6a6a" : isRelay ? "#f2c67f" : "#dfe8f2", uncov ? 0.7 : 1);
     // progress
     let frac = 0;
     if (b.type === "drill") frac = b.progress;
@@ -640,71 +725,55 @@ function roundRect(x, y, w, h, r) {
 
 /* ============================== placement & building ============================== */
 
-const mode = { name: "pan", building: null }; // pan | place | demolish
+let selTile = null; // tile highlighted while the tile build sheet is open
 
-function canPlaceAt(type, tx, ty) {
-  if (state.buildings[tx + "," + ty]) return false;
+// Which buildings make sense on this tile (ignoring cost/coverage, which are
+// reported separately so the sheet can explain *why* something is blocked).
+function optionsForTile(tx, ty) {
   const t = tileAt(tx, ty);
-  const spec = BUILDINGS[type];
-  if (spec.placeOn === "resource") {
-    if (!t || !t.res || t.left <= 0) return false;
-    const gate = RESOURCES[t.res].needsTech;
-    if (gate && !techLvl(gate)) return false;
-    return true;
-  }
-  // free ground or an exhausted resource tile; core tiles are blocked
-  return !t || (!!t.res && t.left <= 0);
+  if (state.buildings[tx + "," + ty]) return [];
+  if (t && t.core) return [];
+  if (t && t.res && t.left > 0) return ["drill"];
+  return ["smelter", "assembler", "lab", "relay"]; // free or exhausted ground
 }
 
-function tryPlace(tx, ty) {
-  const type = mode.building;
-  const spec = BUILDINGS[type];
-  if (!canPlaceAt(type, tx, ty)) {
-    const t = tileAt(tx, ty);
-    if (spec.placeOn === "resource" && t && t.res && RESOURCES[t.res].needsTech && !techLvl(RESOURCES[t.res].needsTech)) {
-      toast("Requires " + TECHS[RESOURCES[t.res].needsTech].name + " tech");
-    } else if (spec.placeOn === "resource") {
-      toast("Drills go on resource tiles");
-    } else {
-      toast("Needs free ground");
-    }
-    return;
+function placeBlocker(type, tx, ty) {
+  const t = tileAt(tx, ty);
+  if (type === "drill" && t && t.res) {
+    const gate = RESOURCES[t.res].needsTech;
+    if (gate && !techLvl(gate)) return "Requires " + TECHS[gate].name + " tech";
   }
-  if (!canAfford(spec.cost)) { toast("Not enough resources"); return; }
-  payCost(spec.cost);
+  if (!inCoverage(tx, ty)) return "Outside the transfer grid — place a Relay closer";
+  if (!canAfford(BUILDINGS[type].cost)) return "Not enough resources";
+  return null;
+}
+
+function tryPlace(type, tx, ty) {
+  if (optionsForTile(tx, ty).indexOf(type) < 0) { toast("Can't build that here"); return false; }
+  const blocker = placeBlocker(type, tx, ty);
+  if (blocker) { toast(blocker); return false; }
+  payCost(BUILDINGS[type].cost);
   state.buildings[tx + "," + ty] = {
     type, x: tx, y: ty,
-    recipe: spec.defaultRecipe || null,
+    recipe: BUILDINGS[type].defaultRecipe || null,
     job: null, progress: 0, crafting: false,
   };
+  rebuildCoverage();
   if (navigator.vibrate) navigator.vibrate(12);
   saveGame();
+  return true;
 }
 
 function demolish(tx, ty) {
   const key = tx + "," + ty;
   const b = state.buildings[key];
-  if (!b) { toast("Tap a building to demolish"); return; }
+  if (!b || b.type === "base") return;
   const cost = BUILDINGS[b.type].cost;
   for (const k in cost) invAdd(k, Math.floor(cost[k] / 2));
   delete state.buildings[key];
+  rebuildCoverage();
   toast(BUILDINGS[b.type].name + " demolished (50% refund)");
   saveGame();
-}
-
-function setMode(name, building) {
-  mode.name = name;
-  mode.building = building || null;
-  const bar = el("placebar");
-  if (name === "place") {
-    el("placebar-label").textContent = "Tap a tile to place " + BUILDINGS[building].name;
-    bar.classList.remove("hidden");
-  } else if (name === "demolish") {
-    el("placebar-label").textContent = "Tap a building to demolish";
-    bar.classList.remove("hidden");
-  } else {
-    bar.classList.add("hidden");
-  }
 }
 
 /* ============================== input ============================== */
@@ -727,14 +796,12 @@ canvas.addEventListener("pointerdown", e => {
     const [wx, wy] = screenToWorld(e.clientX, e.clientY);
     const tx = Math.floor(wx), ty = Math.floor(wy);
     clearTimeout(holdTimer);
-    if (mode.name === "pan") {
-      holdTimer = setTimeout(() => {
-        const p = pointers.get(e.pointerId);
-        if (p && !p.moved && pointers.size === 1) {
-          if (startHold(tx, ty)) suppressTap = true;
-        }
-      }, 230);
-    }
+    holdTimer = setTimeout(() => {
+      const p = pointers.get(e.pointerId);
+      if (p && !p.moved && pointers.size === 1) {
+        if (startHold(tx, ty)) suppressTap = true;
+      }
+    }, 230);
   }
   e.preventDefault();
 });
@@ -781,16 +848,14 @@ canvas.addEventListener("pointerup", pointerEnd);
 canvas.addEventListener("pointercancel", pointerEnd);
 
 function handleTap(tx, ty) {
-  if (mode.name === "place") { tryPlace(tx, ty); return; }
-  if (mode.name === "demolish") { demolish(tx, ty); return; }
   const b = state.buildings[tx + "," + ty];
   if (b) { openBuildingSheet(tx, ty); return; }
   const t = tileAt(tx, ty);
-  if (t && t.res) {
-    toast(`${ITEMS[t.res].name}: ${fmt(t.left)} left — press & hold to mine`);
-  } else if (t && t.core) {
+  if (t && t.core) {
     toast(`Core deposit — press & hold to crack it (${fmt(t.hp - t.dmg)} HP)`);
+    return;
   }
+  openSheet("tile", { x: tx, y: ty });
 }
 
 // Belt & suspenders against browser gestures the CSS can't fully stop.
@@ -811,33 +876,19 @@ function toast(msg) {
   setTimeout(() => t.remove(), 2600);
 }
 
+function recenterCamera() {
+  state.cam.x = 0.5;
+  state.cam.y = 0.5;
+  state.cam.zoom = 0.8;
+}
+
 function initChrome() {
-  el("version-badge").textContent = "v" + VERSION;
-  el("version-popover").innerHTML =
-    `<b>v${VERSION}</b> &mdash; ${VERSION_SNIPPET}<br><br>` +
-    `<button class="btn ghost" id="reset-save">Reset save</button>`;
-  el("version-badge").addEventListener("click", () => {
-    el("version-popover").classList.toggle("hidden");
-  });
-  document.addEventListener("click", e => {
-    const pop = el("version-popover");
-    if (!pop.classList.contains("hidden") &&
-        !pop.contains(e.target) && e.target !== el("version-badge")) {
-      pop.classList.add("hidden");
-    }
-  });
-  el("version-popover").addEventListener("click", e => {
-    if (e.target.id === "reset-save") {
-      if (confirm("Wipe your factory and start over?")) {
-        localStorage.removeItem(SAVE_KEY);
-        location.reload();
-      }
-    }
-  });
   // static icons in chrome
   document.querySelectorAll("[data-icon]").forEach(span => {
     span.innerHTML = svgIcon(span.dataset.icon, "currentColor");
   });
+  el("recenter").addEventListener("click", recenterCamera);
+  el("minimap").addEventListener("click", recenterCamera);
   // tabs
   document.querySelectorAll("#bottombar .tab").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -846,7 +897,6 @@ function initChrome() {
     });
   });
   el("sheet-close").addEventListener("click", closeSheet);
-  el("placebar-cancel").addEventListener("click", () => setMode("pan"));
   // wrap vs collapsed single-row inventory strip
   const applyInvMode = () => {
     el("inv-strip").classList.toggle("wrap", !state.ui.invCollapsed);
@@ -863,7 +913,6 @@ function initChrome() {
 const INV_ORDER = Object.keys(ITEMS);
 
 function updateTopbar() {
-  el("rp-count").textContent = fmt(state.rp);
   const strip = el("inv-strip");
   let html = "";
   for (const id of INV_ORDER) {
@@ -881,6 +930,7 @@ let sheetContext = null; // for building sheet: {x, y}
 function openSheet(name, ctx2) {
   currentSheet = name;
   sheetContext = ctx2 || null;
+  selTile = name === "tile" ? { x: ctx2.x, y: ctx2.y } : null;
   el("sheet").classList.remove("hidden");
   document.querySelectorAll("#bottombar .tab").forEach(b =>
     b.classList.toggle("active", b.dataset.panel === name));
@@ -890,6 +940,7 @@ function openSheet(name, ctx2) {
 function closeSheet() {
   currentSheet = null;
   sheetContext = null;
+  selTile = null;
   el("sheet").classList.add("hidden");
   document.querySelectorAll("#bottombar .tab").forEach(b => b.classList.remove("active"));
 }
@@ -907,37 +958,86 @@ function renderSheet() {
   if (!currentSheet) return;
   const body = el("sheet-body");
   const title = el("sheet-title");
-  if (currentSheet === "build") {
-    title.textContent = "Build";
+  if (currentSheet === "tile") {
+    const { x, y } = sheetContext;
+    const t = tileAt(x, y);
+    title.textContent = t && t.res
+      ? (t.left > 0 ? ITEMS[t.res].name + " deposit" : "Exhausted ground")
+      : "Open ground";
+    const covered = inCoverage(x, y);
     let h = "";
-    for (const id in BUILDINGS) {
-      const b = BUILDINGS[id];
-      const count = Object.values(state.buildings).filter(x => x.type === id).length;
+    if (t && t.res && t.left > 0) {
       h += `<div class="card">
-        <span class="card-icon">${svgIcon(b.icon, "#dfe8f2")}</span>
-        <span class="card-main">
-          <div class="card-title">${b.name}${count ? ` <span class="lvl">x${count}</span>` : ""}</div>
-          <div class="card-sub">${b.desc}<br>${costHtml(b.cost)}</div>
-        </span>
-        <button class="btn" data-build="${id}" ${canAfford(b.cost) ? "" : "disabled"}>Place</button>
+        <span class="card-icon">${svgIcon(ITEMS[t.res].icon, ITEMS[t.res].color)}</span>
+        <span class="card-main"><div class="card-title">${fmt(t.left)} left</div>
+        <div class="card-sub">Press &amp; hold the tile to mine by hand${covered ? "" : " — it's outside the transfer grid, so drills won't run here yet"}</div></span>
       </div>`;
     }
-    h += `<div class="card">
-      <span class="card-icon">${svgIcon("trash", "#e06060")}</span>
-      <span class="card-main">
-        <div class="card-title">Demolish</div>
-        <div class="card-sub">Remove a building for a 50% refund.</div>
-      </span>
-      <button class="btn danger" data-demolish="1">Select</button>
-    </div>`;
-    body.innerHTML = h;
-    body.querySelectorAll("[data-build]").forEach(btn =>
-      btn.addEventListener("click", () => { setMode("place", btn.dataset.build); closeSheet(); }));
-    body.querySelector("[data-demolish]").addEventListener("click", () => { setMode("demolish"); closeSheet(); });
+    if (!covered) {
+      h += `<div class="card"><span class="card-icon">${svgIcon("relay", "#e06060")}</span>
+        <span class="card-main"><div class="card-title">Outside the transfer grid</div>
+        <div class="card-sub">Buildings only work inside a relay aura connected to your base. Chain Relays out here to extend the grid.</div></span></div>`;
+    }
+    for (const id of optionsForTile(x, y)) {
+      const spec = BUILDINGS[id];
+      if (spec.hidden) continue;
+      const blocker = placeBlocker(id, x, y);
+      const count = Object.values(state.buildings).filter(q => q.type === id).length;
+      h += `<div class="card ${blocker ? "locked" : ""}">
+        <span class="card-icon">${svgIcon(spec.icon, "#dfe8f2")}</span>
+        <span class="card-main">
+          <div class="card-title">${spec.name}${count ? ` <span class="lvl">x${count}</span>` : ""}</div>
+          <div class="card-sub">${spec.desc}<br>${costHtml(spec.cost)}${blocker ? `<br><span style="color:var(--bad)">${blocker}</span>` : ""}</div>
+        </span>
+        <button class="btn" data-place="${id}" ${blocker ? "disabled" : ""}>Build</button>
+      </div>`;
+    }
+    body.innerHTML = h || `<div class="card"><span class="card-main"><div class="card-sub">Nothing to do here.</div></span></div>`;
+    body.querySelectorAll("[data-place]").forEach(btn =>
+      btn.addEventListener("click", () => {
+        if (tryPlace(btn.dataset.place, x, y)) closeSheet();
+      }));
+
+  } else if (currentSheet === "menu") {
+    title.textContent = "Menu";
+    body.innerHTML = `
+      <div class="card">
+        <span class="card-icon">${svgIcon("info", "#8ab4f0")}</span>
+        <span class="card-main">
+          <div class="card-title">GRIDFORGE v${VERSION}</div>
+          <div class="card-sub">${VERSION_SNIPPET}</div>
+        </span>
+      </div>
+      <div class="card">
+        <span class="card-icon">${svgIcon("marker", "#f2a33c")}</span>
+        <span class="card-main"><div class="card-sub">Lost? Jump back to your Base Beacon at the spawn point.</div></span>
+        <button class="btn" data-menu="recenter">Center</button>
+      </div>
+      <div class="card">
+        <span class="card-icon">${svgIcon("trash", "#e06060")}</span>
+        <span class="card-main"><div class="card-sub">Wipe the factory and start a new world.</div></span>
+        <button class="btn danger" data-menu="reset">Reset</button>
+      </div>
+      <div class="card">
+        <span class="card-main"><div class="card-sub">Icons by lorc, delapouite &amp; faithtoken from game-icons.net (CC BY 3.0).</div></span>
+      </div>`;
+    body.querySelector('[data-menu="recenter"]').addEventListener("click", () => { recenterCamera(); closeSheet(); });
+    body.querySelector('[data-menu="reset"]').addEventListener("click", () => {
+      if (confirm("Wipe your factory and start over?")) {
+        localStorage.removeItem(SAVE_KEY);
+        location.reload();
+      }
+    });
 
   } else if (currentSheet === "tech") {
     title.textContent = "Tech";
-    let h = "";
+    let h = `<div class="card">
+      <span class="card-icon">${svgIcon("flask", "#8ab4f0")}</span>
+      <span class="card-main">
+        <div class="card-title">${fmt(state.rp)} research points ${rateHtml("__rp")}</div>
+        <div class="card-sub">Produced by Labs burning flasks.</div>
+      </span>
+    </div>`;
     for (const id in TECHS) {
       const t = TECHS[id];
       const lvl = techLvl(id);
@@ -974,7 +1074,7 @@ function renderSheet() {
          <div class="card-sub">Find a glowing core deposit out in the world and press &amp; hold to crack it. Each one grants a choice of 1 of 3 permanent stacking upgrades.</div></span></div>`;
 
   } else if (currentSheet === "inv") {
-    title.textContent = "Storage";
+    title.textContent = "Resources";
     const rows = INV_ORDER.filter(id => invGet(id) >= 1 || reserveOf(id) > 0);
     body.innerHTML = rows.length
       ? rows.map(id => `<div class="card">
@@ -1004,7 +1104,17 @@ function renderSheet() {
     const spec = BUILDINGS[b.type];
     title.textContent = spec.name;
     let h = "";
-    if (b.type === "drill") {
+    if (!b._cov && b.type !== "relay" && b.type !== "base") {
+      h += `<div class="card"><span class="card-icon">${svgIcon("relay", "#e06060")}</span>
+        <span class="card-main"><div class="card-title" style="color:var(--bad)">Offline</div>
+        <div class="card-sub">Outside the transfer grid. Chain a Relay from your base to bring it back online.</div></span></div>`;
+    }
+    if (b.type === "relay" || b.type === "base") {
+      const rr = gridRelays.find(q => q.x === b.x && q.y === b.y);
+      h += `<div class="card"><span class="card-icon">${svgIcon("relay", rr && rr.active ? "#f2c67f" : "#e06060")}</span>
+        <span class="card-main"><div class="card-title">${rr && rr.active ? "Grid connected" : "Disconnected"}</div>
+        <div class="card-sub">Aura radius ${relayRadiusOf(b.type)} tiles. Buildings inside a connected aura can send and receive items.${rr && rr.active ? "" : " This relay's aura doesn't reach the rest of the grid."}</div></span></div>`;
+    } else if (b.type === "drill") {
       const t = tileAt(b.x, b.y);
       h += `<div class="card"><span class="card-icon">${svgIcon(spec.icon, "#dfe8f2")}</span>
         <span class="card-main"><div class="card-title">${t && t.res ? ITEMS[t.res].name : "Exhausted"}</div>
@@ -1025,9 +1135,11 @@ function renderSheet() {
         <div class="card-sub" style="margin-top:10px">${recipeDesc(b)}</div>
       </span></div>`;
     }
-    h += `<div class="card"><span class="card-icon">${svgIcon("trash", "#e06060")}</span>
-      <span class="card-main"><div class="card-sub">Demolish for a 50% refund.</div></span>
-      <button class="btn danger" data-demo="1">Demolish</button></div>`;
+    if (b.type !== "base") {
+      h += `<div class="card"><span class="card-icon">${svgIcon("trash", "#e06060")}</span>
+        <span class="card-main"><div class="card-sub">Demolish for a 50% refund.</div></span>
+        <button class="btn danger" data-demo="1">Demolish</button></div>`;
+    }
     body.innerHTML = h;
     body.querySelectorAll("[data-recipe]").forEach(btn =>
       btn.addEventListener("click", () => {
@@ -1035,9 +1147,9 @@ function renderSheet() {
         b.crafting = false; b.progress = 0;
         renderSheet();
       }));
-    body.querySelector("[data-demo]").addEventListener("click", () => {
+    const demoBtn = body.querySelector("[data-demo]");
+    if (demoBtn) demoBtn.addEventListener("click", () => {
       demolish(b.x, b.y);
-      setMode("pan");
       closeSheet();
     });
   }
@@ -1064,10 +1176,67 @@ function buyTech(id) {
   state.rp -= rpCost;
   payCost(items);
   state.techs[id] = lvl + 1;
+  if (id === "relayRange") rebuildCoverage();
   toast(t.name + (t.repeat ? " Lv " + (lvl + 1) : "") + " researched");
   if (navigator.vibrate) navigator.vibrate(15);
   saveGame();
   renderSheet();
+}
+
+/* ============================== minimap ============================== */
+
+const mmCanvas = el("minimap");
+const mmCtx = mmCanvas.getContext("2d");
+
+function drawMinimap() {
+  const mw = mmCanvas.width, mh = mmCanvas.height;
+  const T = 3; // canvas px per tile
+  const span = Math.floor(mw / T);
+  const cx = Math.round(state.cam.x - span / 2), cy = Math.round(state.cam.y - span / 2);
+  mmCtx.fillStyle = "#10151a";
+  mmCtx.fillRect(0, 0, mw, mh);
+
+  for (let j = 0; j < span; j++) {
+    for (let i = 0; i < span; i++) {
+      const t = tileAt(cx + i, cy + j);
+      if (!t) continue;
+      if (t.res) {
+        mmCtx.fillStyle = t.left > 0 ? ITEMS[t.res].color : "#2a3138";
+        mmCtx.fillRect(i * T, j * T, T, T);
+      } else if (t.core) {
+        mmCtx.fillStyle = "#c48be0";
+        mmCtx.fillRect(i * T - 1, j * T - 1, T + 2, T + 2);
+      }
+    }
+  }
+  // relay auras
+  for (const r of gridRelays) {
+    mmCtx.beginPath();
+    mmCtx.arc((r.x - cx) * T, (r.y - cy) * T, r.r * T, 0, Math.PI * 2);
+    mmCtx.strokeStyle = r.active ? "rgba(242,163,60,.5)" : "rgba(224,96,96,.5)";
+    mmCtx.lineWidth = 1;
+    mmCtx.stroke();
+  }
+  // buildings
+  for (const key in state.buildings) {
+    const b = state.buildings[key];
+    const isRelay = b.type === "relay" || b.type === "base";
+    mmCtx.fillStyle = isRelay ? "#f2a33c" : "#e8eef4";
+    mmCtx.fillRect((b.x - cx) * T - 1, (b.y - cy) * T - 1, T + 1, T + 1);
+  }
+  // spawn marker
+  const spx = (0 - cx) * T, spy = (0 - cy) * T;
+  mmCtx.strokeStyle = "#f2a33c";
+  mmCtx.lineWidth = 2;
+  mmCtx.beginPath();
+  mmCtx.moveTo(spx - 5, spy); mmCtx.lineTo(spx + 5, spy);
+  mmCtx.moveTo(spx, spy - 5); mmCtx.lineTo(spx, spy + 5);
+  mmCtx.stroke();
+  // viewport
+  const vw = W / tilePx() * T, vh = H / tilePx() * T;
+  mmCtx.strokeStyle = "rgba(216,226,236,.8)";
+  mmCtx.lineWidth = 1.5;
+  mmCtx.strokeRect((state.cam.x - cx) * T - vw / 2, (state.cam.y - cy) * T - vh / 2, vw, vh);
 }
 
 /* ============================== main loop ============================== */
@@ -1075,6 +1244,7 @@ function buyTech(id) {
 let lastT = 0;
 let uiTimer = 0;
 let sheetTimer = 0;
+let mmTimer = 99;
 
 function frame(t) {
   const dt = Math.min(0.25, (t - lastT) / 1000 || 0);
@@ -1084,9 +1254,11 @@ function frame(t) {
   render();
   uiTimer += dt;
   if (uiTimer > 0.25) { uiTimer = 0; updateTopbar(); }
+  mmTimer += dt;
+  if (mmTimer > 0.5) { mmTimer = 0; drawMinimap(); }
   sheetTimer += dt;
   // live-refresh open sheets that show counts, rates or affordability
-  if (sheetTimer > 1 && (currentSheet === "build" || currentSheet === "tech" || currentSheet === "inv")) {
+  if (sheetTimer > 1 && (currentSheet === "tile" || currentSheet === "tech" || currentSheet === "inv")) {
     sheetTimer = 0;
     if (!el("sheet-body").querySelector(":active")) renderSheet();
   }
@@ -1097,13 +1269,19 @@ function frame(t) {
 
 function boot() {
   state = loadGame() || freshState();
+  // migrate pre-0.3 saves: they have no Base Beacon
+  if (!state.buildings["0,0"] || state.buildings["0,0"].type !== "base") {
+    state.buildings["0,0"] = { type: "base", x: 0, y: 0, recipe: null, job: null, progress: 0, crafting: false };
+  }
+  rebuildCoverage();
   resize();
   initChrome();
   updateTopbar();
   if (!state.seenIntro) {
     state.seenIntro = true;
     setTimeout(() => toast("Press & hold an ore tile to mine it"), 600);
-    setTimeout(() => toast("Drag to pan — pinch to zoom"), 3400);
+    setTimeout(() => toast("Tap a tile to build on it"), 3400);
+    setTimeout(() => toast("Buildings only work inside your relay grid"), 6200);
     saveGame();
   }
   setInterval(saveGame, 5000);

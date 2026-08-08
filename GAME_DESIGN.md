@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 0.2** — see [Version history](#version-history).
+**Current version: 0.3** — see [Version history](#version-history).
 
 ---
 
@@ -46,7 +46,9 @@ perk choice ← crack core deposit ← expand outward ← research tech
 - Infinite chunked grid, deterministic from a seed (value noise). Nothing is
   stored for untouched tiles; only deltas (depletion, buildings) are saved.
 - Resource tiles: **iron ore, copper ore, coal, stone** near spawn; **crystal**
-  appears further out. Each tile holds a finite (large) amount.
+  appears further out. Each tile holds a finite (large) amount. Fields are
+  deliberately sparse (0.3) — large stretches of open ground between patches
+  make expansion routes and relay placement meaningful decisions.
 - **Distance scaling:** tile richness grows with distance from spawn, so
   expansion is always worth the logistics pain.
 - Guaranteed starter patches of iron/copper/coal/stone near spawn so the
@@ -58,8 +60,15 @@ perk choice ← crack core deposit ← expand outward ← research tech
   large progress ring extends well past the thumb, and a callout bubble above
   the finger shows the mined item, amount left, and swing progress (0.2 —
   sized so your own thumb never hides the feedback).
-- **Build:** pick a building from the build sheet, tap valid tiles to place.
-  Demolish refunds 50%.
+- **Build (0.3):** tap any terrain tile to open a contextual sheet that offers
+  only the buildings that make sense there (ore tile → Drill; open ground →
+  Smelter/Assembler/Lab/Relay), with the blocking reason spelled out when one
+  can't be built (out of grid range, missing tech, unaffordable). Demolish
+  lives in the building's own sheet and refunds 50%.
+- **Navigation (0.3):** a recenter button and a minimal always-on minimap
+  (patches, buildings, relay auras, spawn cross, viewport box) sit in the top
+  corners; tapping either the button or the minimap jumps back to the Base
+  Beacon at spawn.
 - Double-tap zoom, text selection, and the iOS long-press magnifier are all
   suppressed — long-press is a *game verb* here.
 
@@ -71,8 +80,23 @@ perk choice ← crack core deposit ← expand outward ← research tech
 | Assembler | any free tile | plates → gears, wire, circuits, flasks |
 | Lab | any free tile | consumes flasks → research points (RP) |
 
-Logistics are abstracted in 0.1: all machines pull from and deposit into a
-shared global inventory. Belts/inserters are a candidate for a later version.
+### Transfer grid (0.3)
+
+There is no magic global storage. A **Base Beacon** at spawn and placeable
+**Relay** towers each project a circular aura; relays whose auras overlap link
+up, and only the network connected back to the Base Beacon is *active*.
+Buildings operate — drills mine, machines pull ingredients and push outputs —
+only inside an active aura. Everything inside the connected grid shares one
+resource pool (the "Resources" tab); buildings outside it sit offline with a
+red outline until you chain relays out to them. Expanding the factory
+therefore means expanding the grid, tower by tower. Relays must themselves be
+placed inside existing coverage, so the grid always grows from the base
+outward. The repeatable **Signal Boost** tech (+1 aura radius per level) makes
+late-game grids exponentially cheaper per tile covered. Manual press-and-hold
+mining still works anywhere — you carry what you dig.
+
+Belts/inserters as a finer-grained logistics layer remain a candidate for a
+later version.
 
 **Reserves (0.2):** each item can have a reserve level (set via the lock button
 in Storage: off/100/1k/10k/100k). Machines never consume an item below its
@@ -111,9 +135,13 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 ## UI layout
 
-- **Top bar:** version badge (current version + what's-new snippet), RP
-  counter, and the inventory strip. The strip wraps to multiple rows by
-  default; a toggle button collapses it to a single scrollable row (0.2).
+- **Top bar:** recenter button, inventory strip, collapse toggle, minimap.
+  The strip wraps to multiple rows by default; the toggle collapses it to a
+  single scrollable row (0.2).
+- **Bottom tabs (0.3):** Tech / Perks / Resources / Menu. Research points and
+  their rate live at the top of the Tech sheet. The Menu sheet holds the
+  version + what's-new snippet, recenter, reset, and icon attribution — the
+  version number is no longer shown on the map screen.
 - **Structure badges (0.2):** buildings near the center of the screen get a
   small circular overlay showing the item they're currently mining/crafting,
   fading out toward the screen edges to keep the map readable.
@@ -144,5 +172,6 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 0.3 | Relay transfer grid, minimap, tap-to-build, menu tab |
 | 0.2 | Mining callout, resource reserves, rates, structure badges |
 | 0.1 | Drills, smelting, crafting, tech tree, core deposit perks |

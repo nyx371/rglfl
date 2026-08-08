@@ -1,7 +1,7 @@
 // GRIDFORGE static data: version, items, recipes, buildings, techs, perks.
 
-const VERSION = "0.2";
-const VERSION_SNIPPET = "Mining callout, resource reserves, rates, structure badges";
+const VERSION = "0.3";
+const VERSION_SNIPPET = "Relay transfer grid, minimap, tap-to-build, menu tab";
 
 const ITEMS = {
   ironOre:     { name: "Iron Ore",     icon: "ore",     color: "#a8b6c6" },
@@ -69,6 +69,21 @@ const BUILDINGS = {
     placeOn: "free",
     defaultRecipe: "labFlask",
   },
+  relay: {
+    name: "Relay", icon: "relay",
+    desc: "Extends the transfer grid. Buildings only work inside relay range.",
+    cost: { stone: 10 },
+    placeOn: "free",
+    radius: 6,
+  },
+  base: {
+    name: "Base Beacon", icon: "relay",
+    desc: "Your landing site. The heart of the transfer grid.",
+    cost: {},
+    placeOn: "free",
+    radius: 8,
+    hidden: true, // never offered in build menus, cannot be demolished
+  },
 };
 
 // Techs. Repeatable ones have costGrowth (cost = base * growth^level).
@@ -78,6 +93,7 @@ const TECHS = {
   craftSpeed:    { name: "Servo Arms",       icon: "assembler", repeat: true, baseCost: 10, costGrowth: 3, effect: "Assemblers work 50% faster per level", mult: 1.5 },
   labSpeed:      { name: "Peer Review",      icon: "lab",     repeat: true,  baseCost: 15,  costGrowth: 3, effect: "Labs work 50% faster per level", mult: 1.5 },
   manualMining:  { name: "Powered Picks",    icon: "mine",    repeat: true,  baseCost: 5,   costGrowth: 3, effect: "Manual mining yields x2 per level", mult: 2 },
+  relayRange:    { name: "Signal Boost",     icon: "relay",   repeat: true,  baseCost: 25,  costGrowth: 3, effect: "+1 relay aura radius per level" },
   electronics:   { name: "Electronics",      icon: "circuit", repeat: false, baseCost: 20,  itemCost: {}, effect: "Unlocks the Circuit recipe" },
   crystalDrilling:{ name: "Crystal Drilling",icon: "crystal", repeat: false, baseCost: 50,  itemCost: { circuit: 5 }, effect: "Drills and picks can mine Crystal" },
   advancedFlasks:{ name: "Advanced Flasks",  icon: "flask",   repeat: false, baseCost: 100, itemCost: { crystal: 10 }, effect: "Crystal Flasks worth 10 RP each" },

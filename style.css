@@ -73,7 +73,19 @@ canvas#game {
   white-space: nowrap;
 }
 button.chip { font: inherit; font-size: 13px; font-weight: 700; }
-#version-badge { color: var(--accent); }
+#recenter { color: var(--accent); }
+
+#minimap {
+  position: fixed;
+  top: calc(var(--sat) + 48px);
+  right: 8px;
+  width: 110px;
+  height: 110px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: rgba(16, 20, 24, .82);
+  z-index: 15;
+}
 
 .chip-icon, .tab-icon { width: 16px; height: 16px; display: inline-block; }
 .chip-icon svg, .tab-icon svg { width: 100%; height: 100%; display: block; }
@@ -93,23 +105,6 @@ button.chip { font: inherit; font-size: 13px; font-weight: 700; }
 #inv-strip::-webkit-scrollbar { display: none; }
 #inv-strip .chip { padding: 5px 10px; font-weight: 600; flex: 0 0 auto; font-size: 12px; }
 #inv-strip .chip .rate { color: var(--dim); font-weight: 600; font-size: 10px; }
-
-#version-popover {
-  position: fixed;
-  top: calc(var(--sat) + 48px);
-  left: 8px;
-  max-width: 280px;
-  background: var(--panel);
-  border: 1px solid var(--edge);
-  border-radius: 12px;
-  padding: 12px 14px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--dim);
-  z-index: 30;
-  box-shadow: 0 8px 24px rgba(0,0,0,.5);
-}
-#version-popover b { color: var(--text); }
 
 /* ---------- bottom bar ---------- */
 #bottombar {
@@ -232,33 +227,6 @@ button.chip { font: inherit; font-size: 13px; font-weight: 700; }
 }
 .recipe-pick.sel { border-color: var(--accent); color: var(--accent); }
 .recipe-pick svg { width: 14px; height: 14px; }
-
-/* ---------- placement bar ---------- */
-#placebar {
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: calc(var(--sab) + 78px);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: rgba(20, 26, 33, .95);
-  border: 1px solid var(--accent);
-  border-radius: 12px;
-  padding: 10px 14px;
-  z-index: 22;
-  font-size: 13px;
-  font-weight: 700;
-}
-#placebar-cancel {
-  background: none;
-  border: 1px solid var(--edge);
-  border-radius: 8px;
-  color: var(--dim);
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 700;
-}
 
 /* ---------- modal (perk choice) ---------- */
 #modal-wrap {

@@ -7,37 +7,31 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#101418">
 <title>GRIDFORGE</title>
-<link rel="stylesheet" href="style.css?v=20260808090234">
+<link rel="stylesheet" href="style.css?v=20260808092623">
 </head>
 <body>
 <canvas id="game"></canvas>
 
 <div id="topbar">
   <div id="topbar-row">
-    <button id="version-badge" class="chip"></button>
-    <div id="rp-chip" class="chip"><span class="chip-icon" data-icon="flask"></span><span id="rp-count">0</span></div>
+    <button id="recenter" class="chip"><span class="chip-icon" data-icon="marker"></span></button>
     <button id="inv-toggle" class="chip"><span class="chip-icon" data-icon="expand"></span></button>
   </div>
   <div id="inv-strip" class="wrap"></div>
 </div>
 
-<div id="version-popover" class="hidden"></div>
+<canvas id="minimap" width="220" height="220"></canvas>
 
 <div id="bottombar">
-  <button class="tab" data-panel="build"><span class="tab-icon" data-icon="hammer"></span><span>Build</span></button>
   <button class="tab" data-panel="tech"><span class="tab-icon" data-icon="processor"></span><span>Tech</span></button>
   <button class="tab" data-panel="perks"><span class="tab-icon" data-icon="upgrade"></span><span>Perks</span></button>
-  <button class="tab" data-panel="inv"><span class="tab-icon" data-icon="crate"></span><span>Storage</span></button>
+  <button class="tab" data-panel="inv"><span class="tab-icon" data-icon="crate"></span><span>Resources</span></button>
+  <button class="tab" data-panel="menu"><span class="tab-icon" data-icon="menu"></span><span>Menu</span></button>
 </div>
 
 <div id="sheet" class="hidden">
   <div id="sheet-head"><span id="sheet-title"></span><button id="sheet-close">&times;</button></div>
   <div id="sheet-body"></div>
-</div>
-
-<div id="placebar" class="hidden">
-  <span id="placebar-label"></span>
-  <button id="placebar-cancel">Cancel</button>
 </div>
 
 <div id="modal-wrap" class="hidden">
@@ -46,8 +40,8 @@
 
 <div id="toasts"></div>
 
-<script src="js/icons.js?v=20260808090234"></script>
-<script src="js/data.js?v=20260808090234"></script>
-<script src="js/game.js?v=20260808090234"></script>
+<script src="js/icons.js?v=20260808092623"></script>
+<script src="js/data.js?v=20260808092623"></script>
+<script src="js/game.js?v=20260808092623"></script>
 </body>
 </html>
