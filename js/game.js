@@ -98,14 +98,18 @@ const STARTER_PATCHES = [
 ];
 
 // Larger noise scale + higher threshold = sparser fields with more open
-// ground between patches (patches stay a similar size, they just spread out).
+// ground between patches. Tuned so a patch is a stop on a route, not a
+// permanent home: you outgrow one and move outward.
+// Thresholds are measured, not guessed: six generators overlap, so a
+// per-generator threshold of ~0.85 lands total ore coverage near 15% of
+// tiles. Open ground is the default; a patch is a destination.
 const RES_GEN = [
-  { res: "ironOre",   seed: 1013, scale: 13, th: 0.685 },
-  { res: "copperOre", seed: 2027, scale: 13, th: 0.690 },
-  { res: "coal",      seed: 3041, scale: 12, th: 0.695 },
-  { res: "stone",     seed: 4057, scale: 12, th: 0.695 },
-  { res: "crystal",   seed: 5077, scale: 14, th: 0.715, minDist: 40 },
-  { res: "titanium",  seed: 6091, scale: 16, th: 0.725, minDist: 95 },
+  { res: "ironOre",   seed: 1013, scale: 13, th: 0.850 },
+  { res: "copperOre", seed: 2027, scale: 13, th: 0.855 },
+  { res: "coal",      seed: 3041, scale: 12, th: 0.860 },
+  { res: "stone",     seed: 4057, scale: 12, th: 0.860 },
+  { res: "crystal",   seed: 5077, scale: 14, th: 0.875, minDist: 40 },
+  { res: "titanium",  seed: 6091, scale: 16, th: 0.885, minDist: 95 },
 ];
 
 const CHUNK = 16;
@@ -122,7 +126,7 @@ function baseTile(x, y) {
 
   for (const p of STARTER_PATCHES) {
     if (x >= p.x0 && x <= p.x1 && y >= p.y0 && y <= p.y1) {
-      out = { res: p.res, cap: Math.round(400 * (0.8 + 0.4 * hash2(state.seed ^ 77, x, y))) };
+      out = { res: p.res, cap: Math.round(150 * (0.8 + 0.4 * hash2(state.seed ^ 77, x, y))) };
     }
   }
 
@@ -147,8 +151,10 @@ function baseTile(x, y) {
       if (m > 0 && m > bestMargin) { best = g; bestMargin = m; }
     }
     if (best) {
+      // thinner tiles overall, but richness still climbs with distance so
+      // pushing outward stays the answer to running dry
       const rich = 0.7 + 0.6 * hash2(state.seed ^ 99, x, y);
-      out = { res: best.res, cap: Math.round((350 + 4 * dist) * rich * (1 + bestMargin * 6)) };
+      out = { res: best.res, cap: Math.round((90 + 3.0 * dist) * rich * (1 + bestMargin * 4)) };
     }
   }
 
@@ -516,6 +522,7 @@ function addFloater(wx, wy, txt, color) {
 let particles = []; // world-space {wx, wy, vx, vy, age, life, color, r}
 let shake = 0;
 let camAnim = null; // {fx, fy, fz, tx, ty, tz, t, dur}
+let panVel = null;  // world units/sec, carries a flick after the finger lifts
 
 function burst(wx, wy, color, n, power) {
   for (let i = 0; i < n; i++) {
@@ -555,6 +562,15 @@ function tickJuice(dt) {
   particles = particles.filter(p => p.age < p.life);
 
   if (shake > 0) shake = Math.max(0, shake - dt * 55);
+
+  if (panVel && !camAnim && pointers.size === 0) {
+    state.cam.x += panVel.vx * dt;
+    state.cam.y += panVel.vy * dt;
+    const decay = Math.pow(0.0022, dt);
+    panVel.vx *= decay;
+    panVel.vy *= decay;
+    if (Math.hypot(panVel.vx, panVel.vy) < 0.35) panVel = null;
+  }
 
   if (camAnim) {
     camAnim.t += dt;
@@ -671,7 +687,7 @@ function startHold(tx, ty) {
 function stopHold() { hold.active = false; }
 
 function tickHold(dt) {
-  const interval = hold.kind === "core" ? 0.35 : 0.7;
+  const interval = hold.kind === "core" ? 0.5 : 1.1;
   hold.t += dt;
   while (hold.t >= interval) {
     hold.t -= interval;
@@ -1030,7 +1046,7 @@ function render() {
   // hold-mining feedback: highlighted tile, big ring past the thumb, callout bubble
   if (hold.active) {
     const [sx, sy] = worldToScreen(hold.x + 0.5, hold.y + 0.5);
-    const interval = hold.kind === "core" ? 0.35 : 0.7;
+    const interval = hold.kind === "core" ? 0.5 : 1.1;
     const t = tileAt(hold.x, hold.y);
     const pulse = 0.75 + 0.25 * Math.sin(lastT / 110);
 
@@ -1337,6 +1353,7 @@ let dismissedRadial = false;
 
 canvas.addEventListener("pointerdown", e => {
   camAnim = null; // touching the map always wins over an in-flight camera move
+  panVel = null;
   // Never let a capture failure abort the handler — that would drop the touch
   // entirely and leave the map unresponsive.
   try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not fatal */ }
@@ -1391,15 +1408,34 @@ canvas.addEventListener("pointermove", e => {
     return;
   }
 
+  // one finger while the hold-to-draw button is down paints too
+  if (pointers.size === 1 && paintHeld && (mode.name === "place" || mode.name === "demolish")) {
+    const [wx, wy] = screenToWorld(e.clientX, e.clientY);
+    paintAt(Math.floor(wx), Math.floor(wy));
+    suppressTap = true;
+    e.preventDefault();
+    return;
+  }
+
   if (pointers.size === 1 && !hold.active) {
     const s = tilePx();
     state.cam.x -= dx / s;
     state.cam.y -= dy / s;
+    const now = performance.now();
+    const gap = Math.max(8, now - (p.mt || now - 16));
+    p.mt = now;
+    panVel = { vx: -dx / s / (gap / 1000), vy: -dy / s / (gap / 1000) };
   } else if (pointers.size === 2 && pinchStart) {
     const [a, b] = [...pointers.values()];
     const d = Math.hypot(a.x - b.x, a.y - b.y);
     if (d > 10) {
+      // zoom about the pinch midpoint, so the map grows under your fingers
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const [wx, wy] = screenToWorld(mx, my);
       state.cam.zoom = Math.min(2.5, Math.max(0.12, pinchStart.zoom * (d / pinchStart.d)));
+      const s2 = tilePx();
+      state.cam.x = wx - (mx - W / 2) / s2;
+      state.cam.y = wy - (my - H / 2) / s2;
     }
   }
   e.preventDefault();
@@ -1413,6 +1449,8 @@ function pointerEnd(e) {
   if (hold.active) stopHold();
   if (!p) return;
   const dur = performance.now() - p.t;
+  // a flick only coasts if the finger was still moving when it left
+  if (panVel && (performance.now() - (p.mt || 0) > 90 || pointers.size > 0)) panVel = null;
   if (!p.moved && dur < 350 && !suppressTap && e.type === "pointerup") {
     const [wx, wy] = screenToWorld(e.clientX, e.clientY);
     handleTap(Math.floor(wx), Math.floor(wy), e.clientX, e.clientY);
@@ -1422,7 +1460,8 @@ function pointerEnd(e) {
 canvas.addEventListener("pointerup", pointerEnd);
 canvas.addEventListener("pointercancel", pointerEnd);
 
-let paintStroke = new Set(); // tiles already touched by the current 2-finger drag
+let paintStroke = new Set(); // tiles already touched by the current paint stroke
+let paintHeld = false;       // the hold-to-draw button is down
 
 function paintAt(tx, ty) {
   const key = tx + "," + ty;
@@ -1461,12 +1500,28 @@ canvas.addEventListener("touchend", e => e.preventDefault(), { passive: false })
 
 /* ============================== UI: chrome ============================== */
 
+// Repeats collapse into a count instead of stacking — placing twenty relays
+// should read "Not enough resources ×20", not fill the screen.
 function toast(msg) {
+  const box = el("toasts");
+  const last = box.lastElementChild;
+  if (last && last._msg === msg) {
+    last._n = (last._n || 1) + 1;
+    last.textContent = msg + "  ×" + last._n;
+    last.style.animation = "none";
+    void last.offsetHeight; // reflow so the fade restarts
+    last.style.animation = "";
+    clearTimeout(last._t);
+    last._t = setTimeout(() => last.remove(), 2600);
+    return;
+  }
   const t = document.createElement("div");
   t.className = "toast";
   t.textContent = msg;
-  el("toasts").appendChild(t);
-  setTimeout(() => t.remove(), 2600);
+  t._msg = msg;
+  t._n = 1;
+  box.appendChild(t);
+  t._t = setTimeout(() => t.remove(), 2600);
 }
 
 function recenterCamera() {
@@ -1479,6 +1534,21 @@ function initChrome() {
     span.innerHTML = svgIcon(span.dataset.icon, "currentColor");
   });
   el("placebar-cancel").addEventListener("click", () => setMode("none"));
+  // Hold with the left thumb, draw with the right — an alternative to the
+  // two-finger paint gesture that leaves the drawing hand free.
+  const paintBtn = el("paint-hold");
+  const setPaint = on => {
+    paintHeld = on;
+    paintBtn.classList.toggle("on", on);
+    if (on) { paintStroke = new Set(); if (navigator.vibrate) navigator.vibrate(8); }
+  };
+  paintBtn.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    try { paintBtn.setPointerCapture(e.pointerId); } catch (err) { /* not fatal */ }
+    setPaint(true);
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(ev =>
+    paintBtn.addEventListener(ev, () => setPaint(false)));
   el("offline-jump").addEventListener("click", () => {
     if (!offlineList.length) return;
     offlineIdx = offlineIdx % offlineList.length;
@@ -1495,6 +1565,8 @@ function initChrome() {
     });
   });
   el("sheet-close").addEventListener("click", closeSheet);
+  // a resource chip is a shortcut into its own sheet
+  el("inv-strip").addEventListener("click", () => openSheet("inv"));
 }
 
 const INV_ORDER = Object.keys(ITEMS);
@@ -1576,7 +1648,7 @@ function renderSheet() {
       const spec = BUILDINGS[id];
       if (spec.hidden) continue;
       const count = Object.values(state.buildings).filter(q => q.type === id).length;
-      h += `<div class="card ${canAfford(spec.cost) ? "" : "locked"}">
+      h += `<div class="card ${canAfford(spec.cost) ? "afford" : "locked"}">
         <span class="card-icon">${svgIcon(spec.icon, "#dfe8f2")}</span>
         <span class="card-main">
           <div class="card-title">${spec.name}${count ? ` <span class="lvl">x${count}</span>` : ""}</div>
@@ -1717,7 +1789,7 @@ function renderSheet() {
       const rpCost = t.repeat ? Math.round(t.baseCost * Math.pow(t.costGrowth, lvl)) : t.baseCost;
       const items = t.itemCost || {};
       const afford = !done && state.rp >= rpCost && canAfford(items);
-      h += `<div class="card ${done ? "locked" : ""}">
+      h += `<div class="card ${done ? "locked" : afford ? "afford" : ""}">
         <span class="card-icon">${svgIcon(done ? "check" : t.icon, done ? "#6fce6f" : "#dfe8f2")}</span>
         <span class="card-main">
           <div class="card-title">${t.name}${t.repeat && lvl ? ` <span class="lvl">Lv ${lvl}</span>` : ""}</div>
@@ -1828,6 +1900,15 @@ function renderSheet() {
           return `<button class="recipe-pick ${b.recipe === rid ? "sel" : ""}" data-recipe="${rid}">${svgIcon(outIcon, outColor)} ${r.name}</button>`;
         }).join("") +
         `</div><div class="slim">${svgIcon("info", "#8a99a8")}<span>${recipeDesc(b)}</span></div>`;
+      const sameType = Object.values(state.buildings).filter(q => q.type === b.type);
+      const differing = sameType.filter(q => q.recipe !== b.recipe).length;
+      if (differing) {
+        h += `<div class="alloc-row">
+          <span class="alloc-icon">${svgIcon(spec.icon, "#dfe8f2")}</span>
+          <span class="alloc-name">All ${sameType.length} ${spec.name.toLowerCase()}s<small>${differing} differ</small></span>
+          <button class="btn" data-all="1">Set</button>
+        </div>`;
+      }
     }
     if (canUpgrade(b)) {
       const cost = upgradeCost(b);
@@ -1860,6 +1941,21 @@ function renderSheet() {
         renderSheet();
       }));
   }
+  const allBtn = body.querySelector("[data-all]");
+  if (allBtn) allBtn.addEventListener("click", () => {
+    const b = state.buildings[sheetContext.x + "," + sheetContext.y];
+    let n = 0;
+    for (const key in state.buildings) {
+      const q = state.buildings[key];
+      if (q.type !== b.type || q.recipe === b.recipe) continue;
+      q.recipe = b.recipe;
+      q.crafting = false; q.progress = 0; q.idle = 0;
+      n++;
+    }
+    toast(n + " set to " + RECIPES[b.recipe].name);
+    saveGame();
+    renderSheet();
+  });
   wireRowActions(body);
 }
 

@@ -1,7 +1,7 @@
 // GRIDFORGE static data: version, items, recipes, buildings, techs, perks.
 
-const VERSION = "1.1";
-const VERSION_SNIPPET = "Fixes stock that machines could never consume";
+const VERSION = "1.2";
+const VERSION_SNIPPET = "Hold-to-draw, leaner ore, momentum pan, pinch anchoring";
 
 // Research points get their own mark, distinct from the flask item.
 const RP_ICON = "research";
@@ -60,7 +60,7 @@ const BUILDINGS = {
     desc: "Place on a resource tile. Mines it automatically.",
     cost: { ironOre: 15, stone: 5 },
     placeOn: "resource",
-    baseRate: 0.5, // items per second at 1x
+    baseRate: 0.3, // items per second at 1x
   },
   smelter: {
     name: "Smelter", icon: "smelter",

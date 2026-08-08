@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 1.1** — see [Version history](#version-history).
+**Current version: 1.2** — see [Version history](#version-history).
 
 ---
 
@@ -79,12 +79,18 @@ wrong.
     tech-locked, or needs an input you have never held, in which case it falls
     back to the building default. Inheriting a recipe you cannot feed produces
     a row of machines that look built and do nothing.
-12. **Bulk work deserves a bulk gesture.** A second finger changes the verb:
-    with a build or demolish armed, a two-finger drag paints along its path
-    instead of panning or zooming, so laying a relay chain or clearing a dead
-    patch is one motion. Repetitive cleanup also gets a single button —
-    "3 exhausted drills · Clear" leads the Build sheet whenever drills have
-    run dry.
+12. **Bulk work deserves a bulk gesture, and a one-handed alternative.** With
+    a build or demolish armed, a two-finger drag paints along its path instead
+    of panning or zooming. Because a two-finger drag is awkward while holding
+    a phone, the placement bar also carries a hold-to-draw button on its far
+    left: hold it with the left thumb and draw with the right hand, one
+    finger. Both routes share one stroke set, so neither double-charges.
+    Repetitive cleanup gets a single button too — "3 exhausted drills · Clear"
+    leads the Build sheet whenever drills have run dry, and a machine's sheet
+    offers "All 12 assemblers · Set" when its siblings differ.
+14. **Repeats collapse, they don't stack.** Identical messages become
+    "Not enough resources ×5" on one line with its timer restarted, rather
+    than a column of the same sentence.
 13. **One meaning, one mark.** Research points own the idea icon; the flask
     stays the craftable item. Reusing a symbol for two things makes a lab's
     overlay ambiguous with its own ingredient.
@@ -123,16 +129,39 @@ perk choice ← crack core deposit ← expand outward ← research tech
 - Infinite chunked grid, deterministic from a seed (value noise). Nothing is
   stored for untouched tiles; only deltas (depletion, buildings) are saved.
 - Resource tiles: **iron ore, copper ore, coal, stone** near spawn; **crystal**
-  appears further out. Each tile holds a finite (large) amount. Fields are
-  deliberately sparse (0.3) — large stretches of open ground between patches
-  make expansion routes and relay placement meaningful decisions.
+  past 40 tiles, **titanium** past 95. Each tile holds a finite amount.
+
+### Scarcity and the expansion clock (1.2)
+
+Ore covers roughly **15% of tiles** near spawn — measured against the noise
+functions rather than guessed, since six overlapping generators made an
+innocent-looking per-generator threshold produce 70% coverage in practice.
+Open ground is the default; a patch is a destination.
+
+Three dials set the pace, and they compound deliberately:
+
+| Dial | Effect |
+|---|---|
+| Tile yield `(90 + 3·dist) × richness × margin` | a near tile holds ~230, a far one ~800 |
+| Drill rate 0.3/s base | a median near-spawn tile feeds one fresh drill ~13 min |
+| Coverage rising with distance (17% → 26%) | further out is denser *and* richer |
+
+The result is a clock rather than a wall. Early on a patch outlasts your
+attention. Once drill-speed techs and Blast Drilling multiply throughput, the
+same tile burns in two or three minutes, so the factory starts consuming its
+own footprint and the only durable answer is to push the relay grid outward —
+where tiles are ~3.5× richer. Exhausted-drill badges, the attention chip and
+the one-tap "Clear" button exist to make that churn cheap to service.
 - **Distance scaling:** tile richness grows with distance from spawn, so
   expansion is always worth the logistics pain.
 - Guaranteed starter patches of iron/copper/coal/stone near spawn so the
   opening is never a dud roll.
 
 ### Interaction
-- **Pan:** one-finger drag. **Zoom:** pinch. No player character.
+- **Pan:** one-finger drag, with momentum so a flick coasts and decays; any
+  touch cancels it. **Zoom:** pinch, anchored on the pinch midpoint so the map
+  grows under your fingers rather than around the screen centre. No player
+  character.
 - **Manual mine:** press-and-hold any resource tile; the tile highlights, a
   large progress ring extends well past the thumb, and a callout bubble above
   the finger shows the mined item, amount left, and swing progress (0.2 —
@@ -358,6 +387,7 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 1.2 | Hold-to-draw, leaner ore, momentum pan, pinch anchoring |
 | 1.1 | Fixes stock that machines could never consume |
 | 1.0 | Two-finger paint building, starvation hints, gross rates |
 | 0.9 | RP in top bar, sticky recipes, exhausted drill warnings |
