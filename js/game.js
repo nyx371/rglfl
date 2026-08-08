@@ -59,6 +59,8 @@ function freshState() {
     buildings: {},      // "x,y" -> {type, recipe, job, progress, crafting}
     tileDelta: {},      // "x,y" -> {mined} or {coreDmg, broken}
     coresBroken: 0,
+    reserve: {},        // itemId -> amount machines must leave untouched
+    ui: { invCollapsed: false },
     cam: { x: -0.5, y: 1, zoom: 0.8 },
     seenIntro: false,
   };
@@ -197,6 +199,40 @@ function payCost(cost) {
   for (const k in cost) state.inv[k] -= cost[k];
 }
 
+// Machines respect per-item reserves; player actions (building, techs) don't.
+function reserveOf(id) { return state.reserve[id] || 0; }
+function machineCanAfford(cost) {
+  for (const k in cost) if (invGet(k) - reserveOf(k) < cost[k]) return false;
+  return true;
+}
+
+/* ---- per-second rate tracking (display only, not saved) ---- */
+const rates = {};       // itemId -> smoothed items/sec ("__rp" for research)
+let rateSnap = null;
+let rateClock = 0;
+
+function updateRates(dt) {
+  rateClock += dt;
+  if (rateClock < 1) return;
+  const snap = Object.assign({ __rp: state.rp }, state.inv);
+  if (rateSnap) {
+    const keys = new Set([...Object.keys(snap), ...Object.keys(rateSnap)]);
+    for (const k of keys) {
+      const inst = ((snap[k] || 0) - (rateSnap[k] || 0)) / rateClock;
+      rates[k] = (rates[k] || 0) * 0.6 + inst * 0.4;
+    }
+  }
+  rateSnap = snap;
+  rateClock = 0;
+}
+
+function rateHtml(id) {
+  const r = rates[id] || 0;
+  if (Math.abs(r) < 0.05) return "";
+  const cls = r > 0 ? "style='color:var(--good)'" : "style='color:var(--bad)'";
+  return `<span class="rate" ${cls}>${r > 0 ? "+" : ""}${r.toFixed(1)}/s</span>`;
+}
+
 /* ============================== simulation ============================== */
 
 let floaters = []; // {wx, wy, txt, color, age}
@@ -253,7 +289,7 @@ function tickMachine(b, dt) {
   let budget = dt * machineSpeed(b.type);
   for (let guard = 0; guard < 200; guard++) {
     if (!b.crafting) {
-      if (!canAfford(r.in)) return;
+      if (!machineCanAfford(r.in)) return;
       payCost(r.in);
       b.crafting = true;
       b.job = b.recipe;
@@ -492,17 +528,78 @@ function render() {
       ctx.fillStyle = "#f2a33c";
       ctx.fillRect(sx + s * 0.12, sy + s * 0.8, s * 0.76 * frac, s * 0.07);
     }
+
+    // item-type badge, shown for buildings near the center of the screen
+    const dc = Math.hypot(sx + s / 2 - W / 2, sy + s / 2 - H / 2);
+    const R0 = Math.min(W, H) * 0.38;
+    if (dc < R0 * 1.25) {
+      const badge = badgeFor(b);
+      if (badge) {
+        const alpha = Math.min(1, Math.max(0, 1 - (dc - R0) / (R0 * 0.25)));
+        const bs = Math.max(17, s * 0.38);
+        const bx2 = sx + s * 0.92, by2 = sy + s * 0.08;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "rgba(16,20,24,.95)";
+        ctx.beginPath();
+        ctx.arc(bx2, by2, bs / 2 + 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = badge.color;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        drawIcon(badge.icon, bx2, by2, bs * 0.72, badge.color, alpha);
+        ctx.globalAlpha = 1;
+      }
+    }
   }
 
-  // hold-mining ring
+  // hold-mining feedback: highlighted tile, big ring past the thumb, callout bubble
   if (hold.active) {
     const [sx, sy] = worldToScreen(hold.x + 0.5, hold.y + 0.5);
     const interval = hold.kind === "core" ? 0.35 : 0.7;
-    ctx.strokeStyle = "rgba(242,163,60,.9)";
-    ctx.lineWidth = Math.max(3, s * 0.07);
+    const t = tileAt(hold.x, hold.y);
+    const pulse = 0.75 + 0.25 * Math.sin(lastT / 110);
+
+    // tile highlight
+    ctx.strokeStyle = `rgba(242,163,60,${0.9 * pulse})`;
+    ctx.lineWidth = Math.max(2, s * 0.05);
+    ctx.strokeRect(sx - s / 2, sy - s / 2, s, s);
+
+    // big progress ring, radius well beyond a thumb
+    const R = Math.max(s * 0.95, 46);
+    ctx.strokeStyle = "rgba(242,163,60,.25)";
+    ctx.lineWidth = Math.max(5, s * 0.11);
     ctx.beginPath();
-    ctx.arc(sx, sy, s * 0.44, -Math.PI / 2, -Math.PI / 2 + (hold.t / interval) * Math.PI * 2);
+    ctx.arc(sx, sy, R, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.strokeStyle = "rgba(242,163,60,.95)";
+    ctx.beginPath();
+    ctx.arc(sx, sy, R, -Math.PI / 2, -Math.PI / 2 + (hold.t / interval) * Math.PI * 2);
+    ctx.stroke();
+
+    // callout bubble above the finger so the thumb never hides it
+    if (t) {
+      const bw = 160, bh = 52;
+      const bx = Math.min(W - bw - 8, Math.max(8, sx - bw / 2));
+      const by = Math.max(8, sy - R - bh - 18);
+      ctx.fillStyle = "rgba(26,33,41,.96)";
+      roundRect(bx, by, bw, bh, 12);
+      ctx.fill();
+      ctx.strokeStyle = "#f2a33c";
+      ctx.lineWidth = 1.5;
+      roundRect(bx, by, bw, bh, 12);
+      ctx.stroke();
+      const icon = t.res ? ITEMS[t.res].icon : "core";
+      const color = t.res ? ITEMS[t.res].color : "#c48be0";
+      drawIcon(icon, bx + 26, by + bh / 2 - 4, 26, color);
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#d8e2ec";
+      ctx.font = "700 14px -apple-system, sans-serif";
+      ctx.fillText(t.res ? fmt(t.left) + " left" : fmt(t.hp - t.dmg) + " HP", bx + 46, by + 24);
+      ctx.fillStyle = "rgba(0,0,0,.5)";
+      ctx.fillRect(bx + 46, by + 32, bw - 60, 6);
+      ctx.fillStyle = "#f2a33c";
+      ctx.fillRect(bx + 46, by + 32, (bw - 60) * Math.min(1, hold.t / interval), 6);
+    }
   }
 
   // floaters
@@ -515,6 +612,20 @@ function render() {
     ctx.fillText(f.txt, sx, sy);
   }
   ctx.globalAlpha = 1;
+}
+
+// What item a building is currently working on, for its overlay badge.
+function badgeFor(b) {
+  if (b.type === "drill") {
+    const t = tileAt(b.x, b.y);
+    if (!t || !t.res || t.left <= 0) return null;
+    return { icon: ITEMS[t.res].icon, color: ITEMS[t.res].color };
+  }
+  const r = RECIPES[b.recipe];
+  if (!r) return null;
+  if (r.rp) return { icon: "flask", color: "#8ab4f0" };
+  const out = Object.keys(r.out)[0];
+  return out ? { icon: ITEMS[out].icon, color: ITEMS[out].color } : null;
 }
 
 function roundRect(x, y, w, h, r) {
@@ -736,6 +847,17 @@ function initChrome() {
   });
   el("sheet-close").addEventListener("click", closeSheet);
   el("placebar-cancel").addEventListener("click", () => setMode("pan"));
+  // wrap vs collapsed single-row inventory strip
+  const applyInvMode = () => {
+    el("inv-strip").classList.toggle("wrap", !state.ui.invCollapsed);
+    el("inv-toggle").classList.toggle("collapsed", state.ui.invCollapsed);
+  };
+  el("inv-toggle").addEventListener("click", () => {
+    state.ui.invCollapsed = !state.ui.invCollapsed;
+    applyInvMode();
+    saveGame();
+  });
+  applyInvMode();
 }
 
 const INV_ORDER = Object.keys(ITEMS);
@@ -853,14 +975,28 @@ function renderSheet() {
 
   } else if (currentSheet === "inv") {
     title.textContent = "Storage";
-    const rows = INV_ORDER.filter(id => invGet(id) >= 1);
+    const rows = INV_ORDER.filter(id => invGet(id) >= 1 || reserveOf(id) > 0);
     body.innerHTML = rows.length
       ? rows.map(id => `<div class="card">
           <span class="card-icon">${svgIcon(ITEMS[id].icon, ITEMS[id].color)}</span>
-          <span class="card-main"><div class="card-title">${ITEMS[id].name}</div></span>
-          <span class="card-title">${fmt(invGet(id))}</span>
+          <span class="card-main">
+            <div class="card-title">${ITEMS[id].name} ${rateHtml(id)}</div>
+            <div class="card-sub">${reserveOf(id)
+              ? `Reserved: ${fmt(reserveOf(id))} — machines won't touch this stash`
+              : "Tap the lock to reserve a stash machines can't consume"}</div>
+          </span>
+          <span class="card-title" style="margin-right:6px">${fmt(invGet(id))}</span>
+          <button class="btn ghost lock-btn" data-lock="${id}">${svgIcon("lock", reserveOf(id) ? "#f2a33c" : "#8a99a8")}<span>${reserveOf(id) ? fmt(reserveOf(id)) : "Off"}</span></button>
         </div>`).join("")
       : `<div class="card"><span class="card-main"><div class="card-sub">Nothing yet — press &amp; hold a resource tile to mine it by hand.</div></span></div>`;
+    body.querySelectorAll("[data-lock]").forEach(btn =>
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.lock;
+        const steps = [0, 100, 1000, 10000, 100000];
+        state.reserve[id] = steps[(steps.indexOf(reserveOf(id)) + 1) % steps.length];
+        saveGame();
+        renderSheet();
+      }));
 
   } else if (currentSheet === "building") {
     const b = state.buildings[sheetContext.x + "," + sheetContext.y];
@@ -944,12 +1080,13 @@ function frame(t) {
   const dt = Math.min(0.25, (t - lastT) / 1000 || 0);
   lastT = t;
   tick(dt);
+  updateRates(dt);
   render();
   uiTimer += dt;
   if (uiTimer > 0.25) { uiTimer = 0; updateTopbar(); }
   sheetTimer += dt;
-  // live-refresh affordability in open sheets (not the building one; it has its own interactions)
-  if (sheetTimer > 1 && (currentSheet === "build" || currentSheet === "tech")) {
+  // live-refresh open sheets that show counts, rates or affordability
+  if (sheetTimer > 1 && (currentSheet === "build" || currentSheet === "tech" || currentSheet === "inv")) {
     sheetTimer = 0;
     if (!el("sheet-body").querySelector(":active")) renderSheet();
   }

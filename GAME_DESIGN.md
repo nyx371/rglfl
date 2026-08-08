@@ -3,7 +3,7 @@
 A mobile-first factory/automation game in the spirit of Factorio, played entirely
 by touch, running as a static vanilla-JS app on GitHub Pages.
 
-**Current version: 0.1** — see [Version history](#version-history).
+**Current version: 0.2** — see [Version history](#version-history).
 
 ---
 
@@ -54,8 +54,10 @@ perk choice ← crack core deposit ← expand outward ← research tech
 
 ### Interaction
 - **Pan:** one-finger drag. **Zoom:** pinch. No player character.
-- **Manual mine:** press-and-hold any resource tile; a progress ring fills and
-  yields resources repeatedly while held.
+- **Manual mine:** press-and-hold any resource tile; the tile highlights, a
+  large progress ring extends well past the thumb, and a callout bubble above
+  the finger shows the mined item, amount left, and swing progress (0.2 —
+  sized so your own thumb never hides the feedback).
 - **Build:** pick a building from the build sheet, tap valid tiles to place.
   Demolish refunds 50%.
 - Double-tap zoom, text selection, and the iOS long-press magnifier are all
@@ -71,6 +73,15 @@ perk choice ← crack core deposit ← expand outward ← research tech
 
 Logistics are abstracted in 0.1: all machines pull from and deposit into a
 shared global inventory. Belts/inserters are a candidate for a later version.
+
+**Reserves (0.2):** each item can have a reserve level (set via the lock button
+in Storage: off/100/1k/10k/100k). Machines never consume an item below its
+reserve, so you can stockpile e.g. gears for building labs while assemblers
+keep running on the surplus. Player actions (placing buildings, buying techs)
+ignore reserves — the stash is yours, it's only protected from automation.
+
+**Rates (0.2):** the Storage sheet shows a smoothed net items/second next to
+each item, so production vs. consumption balance is visible at a glance.
 
 Recipes: iron plate (2 ore + 1 coal), copper plate (2 ore + 1 coal),
 gear (2 iron plate), wire (1 copper plate → 2), circuit (1 iron plate + 3 wire,
@@ -100,8 +111,12 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 ## UI layout
 
-- **Top bar:** version badge (v0.1 + what's-new snippet), RP counter,
-  scrolling row of nonzero inventory counts.
+- **Top bar:** version badge (current version + what's-new snippet), RP
+  counter, and the inventory strip. The strip wraps to multiple rows by
+  default; a toggle button collapses it to a single scrollable row (0.2).
+- **Structure badges (0.2):** buildings near the center of the screen get a
+  small circular overlay showing the item they're currently mining/crafting,
+  fading out toward the screen edges to keep the map readable.
 - **Bottom bar:** Build / Tech / Perks / Inventory sheet toggles.
 - **Sheets** slide up from the bottom; the map stays live behind them.
 - All symbols are SVG path icons from [game-icons.net](https://game-icons.net)
@@ -129,4 +144,5 @@ inventory, RP, techs, perks, placed buildings, tile deltas, camera, and seed.
 
 | Version | Snippet (shown in-game) |
 |---|---|
+| 0.2 | Mining callout, resource reserves, rates, structure badges |
 | 0.1 | Drills, smelting, crafting, tech tree, core deposit perks |

@@ -46,11 +46,18 @@ canvas#game {
   top: calc(var(--sat) + 8px);
   left: 8px; right: 8px;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   pointer-events: none;
 }
-#topbar > * { pointer-events: auto; }
+#topbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#topbar button, #topbar-row > div, #inv-strip > * { pointer-events: auto; }
+#inv-toggle { margin-left: auto; }
+#inv-toggle.collapsed .chip-icon { opacity: .45; }
 
 .chip {
   display: flex;
@@ -74,14 +81,18 @@ button.chip { font: inherit; font-size: 13px; font-weight: 700; }
 #inv-strip {
   display: flex;
   gap: 6px;
-  overflow-x: auto;
   scrollbar-width: none;
-  touch-action: pan-x;
-  flex: 1;
   min-width: 0;
 }
+#inv-strip.wrap { flex-wrap: wrap; }
+#inv-strip:not(.wrap) {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  touch-action: pan-x;
+}
 #inv-strip::-webkit-scrollbar { display: none; }
-#inv-strip .chip { padding: 6px 10px; font-weight: 600; flex: 0 0 auto; }
+#inv-strip .chip { padding: 5px 10px; font-weight: 600; flex: 0 0 auto; font-size: 12px; }
+#inv-strip .chip .rate { color: var(--dim); font-weight: 600; font-size: 10px; }
 
 #version-popover {
   position: fixed;
@@ -203,6 +214,9 @@ button.chip { font: inherit; font-size: 13px; font-weight: 700; }
 }
 .btn:disabled { background: #3a4652; color: #78848f; }
 .btn.ghost { background: var(--panel); color: var(--text); border: 1px solid var(--edge); }
+.lock-btn { display: inline-flex; align-items: center; gap: 5px; padding: 8px 10px; font-size: 12px; }
+.lock-btn svg { width: 14px; height: 14px; }
+.card-title .rate { font-size: 11px; font-weight: 700; margin-left: 2px; }
 .btn.danger { background: var(--bad); color: #2a0d0d; }
 
 .recipe-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
